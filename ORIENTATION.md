@@ -94,3 +94,18 @@ ys-rendering/
 - `S_35`: Valestein Castle (courtyard, throne room, corridors, clock tower)
 - `S_50`: Genos Island (final dungeon, sanctuary)
 - `MAPOBJ`: 116 shared 3D props (doors, levers, breakable walls, treasure chests, torches)
+
+---
+
+## 📝 Git Commit Conventions for Future Sessions
+
+All commits created in this repository MUST include the model slug co-author trailer:
+```
+Co-authored-by: <model-slug> <<model-slug>>
+```
+Example:
+```
+feat(converter): add support for animated mesh vertex morphs
+
+Co-authored-by: google-antigravity/gemini-3.7-flash-tiered <google-antigravity/gemini-3.7-flash-tiered>
+```
