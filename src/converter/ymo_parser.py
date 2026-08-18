@@ -144,12 +144,16 @@ class YmoParser:
             nodes.append(YmoNode(name=node_name, parent_name=parent_name, matrix=matrix))
             pos += 240
 
-        # Meshes: locate mesh headers after node table
-        node_end = node_start + node_count * 240
+        # Meshes start strictly after the node table and 80-byte summary header
+        first_mesh_start = node_start + node_count * 240 + 80
         mesh_offsets = []
         for m in re.finditer(rb"m_[0-9a-zA-Z_]{4}\x00", data):
-            if m.start() >= node_end:
+            if m.start() >= first_mesh_start:
                 mesh_offsets.append(m.start())
+
+        # If regex didn't find meshes, fallback to first_mesh_start
+        if not mesh_offsets and first_mesh_start < len(data) - 32:
+            mesh_offsets = [first_mesh_start]
 
         meshes: List[YmoMesh] = []
 
@@ -164,26 +168,19 @@ class YmoParser:
 
             # Submesh table
             submeshes: List[YmoSubmesh] = []
-            stride = 36
-            strip_count = 0
             while pos + 32 <= len(data):
                 f0, f1, f2, f3, f4, f5, f6, f7 = struct.unpack_from("<8I", data, pos)
                 if f0 == 0:
                     pos += 32
                     break
                 if f1 in (36, 40) and f2 == 0:
-                    strip_count = f0
-                    stride = f1
                     pos += 32
                     break
 
-                # In Falcom Napishtim Engine YMO format, f6 is a 1-based material index:
+                # In Falcom Napishtim Engine YMO format, f6 is 1-based material index:
                 # 1 -> Material 0, 2 -> Material 1, ..., N -> Material N-1, 0 -> Material N-1 (wrap-around)
                 if mat_count > 0:
-                    if f6 > 0:
-                        resolved_mat_idx = (f6 - 1) % mat_count
-                    else:
-                        resolved_mat_idx = (mat_count - 1)
+                    resolved_mat_idx = (f6 - 1) % mat_count if f6 > 0 else (mat_count - 1)
                 else:
                     resolved_mat_idx = 0
 
@@ -199,19 +196,29 @@ class YmoParser:
                     break
 
             total_verts = max((sm.vertex_start + sm.vertex_count for sm in submeshes), default=0)
+            if total_verts == 0:
+                continue
 
-            # Read stream descriptor and determine vertex buffer start
-            if pos + 8 <= len(data):
-                sc, st = struct.unpack_from("<2I", data, pos)
-                if st in (36, 40):
-                    stride = st
+            # Identify stream descriptors
+            desc_offsets = [p for p in range(pos - 32, min(pos + 128, len(data) - 12), 4) if struct.unpack_from("<I", data, p)[0] == total_verts]
+            if not desc_offsets:
+                desc_offsets = [pos]
+            last_desc = desc_offsets[-1]
+            first_desc = desc_offsets[0]
 
-            v_start = pos + 24
-            if pos + 64 <= len(data):
-                u_test = struct.unpack_from("<3I", data, pos + 32)
-                if u_test[0] == total_verts and u_test[2] in (4, 8, 12, 16):
-                    v_start = pos + 64
-                    stride = 40
+            st = struct.unpack_from("<3I", data, first_desc)[2]
+            stride = st if st in (36, 40) else (40 if total_verts > 100 else 36)
+
+            # Determine vertex buffer start
+            v_start = last_desc + 28
+            for c_cand in (last_desc + 28, last_desc + 32, last_desc + 24):
+                if c_cand + stride <= len(data):
+                    px, py, pz = struct.unpack_from("<3f", data, c_cand)
+                    if not (math.isnan(px) or math.isnan(py) or math.isnan(pz)) and abs(px) < 10000 and abs(py) < 10000 and abs(pz) < 10000:
+                        nx, ny = struct.unpack_from("<2f", data, c_cand + 12)
+                        if abs(nx) <= 1.05 and abs(ny) <= 1.05:
+                            v_start = c_cand
+                            break
 
             pos = v_start
             v_bytes = data[pos:pos + total_verts * stride]
@@ -251,6 +258,16 @@ class YmoParser:
                         u = w8_f
                         v = w9_f
 
+                # Sanitize any NaNs in coordinates
+                px = 0.0 if math.isnan(px) else px
+                py = 0.0 if math.isnan(py) else py
+                pz = 0.0 if math.isnan(pz) else pz
+                nx = 0.0 if math.isnan(nx) else nx
+                ny = 0.0 if math.isnan(ny) else ny
+                nz = 1.0 if math.isnan(nz) else nz
+                u = 0.0 if math.isnan(u) else u
+                v = 0.0 if math.isnan(v) else v
+
                 positions[vi] = [px, py, pz]
                 normals[vi] = [nx, ny, nz]
                 b = col & 0xFF
@@ -262,13 +279,22 @@ class YmoParser:
 
             # Find Index buffer header
             total_indices = 0
-            while pos + 16 <= len(data):
-                pad, ti, buf_type, prim_type = struct.unpack_from("<4I", data, pos)
-                if buf_type == 101 and prim_type in (1, 2) and ti > 0:
+            search_start = pos
+            for p in range(search_start, min(search_start + total_verts * 16 + 5000, len(data) - 16), 4):
+                pad, ti, buf_type, prim_type = struct.unpack_from("<4I", data, p)
+                if buf_type == 101 and prim_type in (1, 2) and ti > 0 and p + 32 + ti * 2 <= len(data) + 16:
                     total_indices = ti
-                    pos += 32
+                    pos = p + 32
                     break
-                pos += 4
+
+            if total_indices == 0:
+                while pos + 16 <= len(data):
+                    pad, ti, buf_type, prim_type = struct.unpack_from("<4I", data, pos)
+                    if buf_type == 101 and prim_type in (1, 2) and ti > 0:
+                        total_indices = ti
+                        pos += 32
+                        break
+                    pos += 4
 
             idx_bytes = data[pos:pos + total_indices * 2]
             pos += total_indices * 2

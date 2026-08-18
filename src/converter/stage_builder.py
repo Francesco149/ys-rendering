@@ -2,7 +2,7 @@
 """
 Falcom Ys Stage & Scene Assembler.
 Parses .SOB (Scene Object Placement) files, loads base map geometry and placed props/doors/objects,
-and combines them into a modular composite 3D scene (glTF 2.0 / GLB) with separate nodes for every prop and terrain.
+and combines them into a modular composite 3D scene (glTF 2.0 / GLB) with separate nodes for every prop, trigger, and terrain.
 """
 
 import math
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
+from PIL import Image
 
 import pygltflib
 from pygltflib import (
@@ -53,6 +54,19 @@ class StageScene:
     placed_objects: List[PlacedObject]
 
 class StageBuilder:
+    TRIGGER_KEYWORDS = ("2mdoor", "3x3", "tofu", "check", "trap", "portal", "trigger")
+
+    @classmethod
+    def is_trigger_object(cls, ymo_path_str: str, model: Optional[YmoModel]) -> bool:
+        stem = Path(ymo_path_str.replace("\\", "/")).stem.lower()
+        if any(k in stem for k in cls.TRIGGER_KEYWORDS):
+            return True
+        if model:
+            # Check if all materials have no texture
+            if all(not m.texture_name for m in model.materials):
+                return True
+        return False
+
     @staticmethod
     def euler_to_matrix(pos: Tuple[float, float, float], rot: Tuple[float, float, float], scale: Tuple[float, float, float]) -> np.ndarray:
         px, py, pz = pos
@@ -199,7 +213,25 @@ class StageBuilder:
         mat_cache: Dict[str, int] = {}
         tex_cache: Dict[str, int] = {}
 
-        def get_or_create_material(ymo_mat: YmoMaterial, ref_model_path: Path) -> int:
+        def get_or_create_material(ymo_mat: YmoMaterial, ref_model_path: Path, is_trigger: bool = False) -> int:
+            if is_trigger:
+                mat_key = "Mat_Trigger_Portal"
+                if mat_key in mat_cache:
+                    return mat_cache[mat_key]
+                gltf_mat_idx = len(gltf.materials)
+                gltf.materials.append(Material(
+                    name="Mat_Trigger_Portal",
+                    pbrMetallicRoughness=PbrMetallicRoughness(
+                        baseColorFactor=[0.2, 0.6, 1.0, 0.25],
+                        metallicFactor=0.0,
+                        roughnessFactor=0.9
+                    ),
+                    alphaMode="BLEND",
+                    doubleSided=True
+                ))
+                mat_cache[mat_key] = gltf_mat_idx
+                return gltf_mat_idx
+
             tex_p = GltfExporter.resolve_texture(ref_model_path, ymo_mat.texture_name)
             tex_key = str(tex_p.resolve()) if (tex_p and tex_p.exists()) else f"no_tex_{ymo_mat.index}"
             mat_key = f"{tex_key}_{ymo_mat.flags}_{ymo_mat.alpha:.3f}"
@@ -253,7 +285,7 @@ class StageBuilder:
             has_texture_alpha = False
             if tex_p and tex_p.exists():
                 try:
-                    chk_im = Image.open(tex_p) if 'Image' in globals() else None
+                    chk_im = Image.open(tex_p)
                     if chk_im and (chk_im.mode in ("RGBA", "LA") or "transparency" in chk_im.info):
                         chk_arr = np.array(chk_im.convert("RGBA"))
                         if (chk_arr[:, :, 3] < 250).any():
@@ -286,10 +318,21 @@ class StageBuilder:
         total_tris_count = 0
 
         for obj in scene.placed_objects:
+            if not obj.model or not obj.model.meshes:
+                continue
+
             ref_p = obj.resolved_path if obj.resolved_path else Path(obj.ymo_path_str)
             obj_stem = Path(obj.ymo_path_str.replace("\\", "/")).stem
             is_base = (obj.index == 0 or obj_stem.upper() == scene.stage_name.upper())
-            node_name = "Terrain" if is_base else f"Prop_{obj.index:02d}_{obj_stem}"
+            is_trigger = cls.is_trigger_object(obj.ymo_path_str, obj.model)
+
+            if is_base:
+                node_name = "Terrain"
+            elif is_trigger:
+                node_name = f"Trigger_{obj.index:02d}_{obj_stem}"
+            else:
+                node_name = f"Prop_{obj.index:02d}_{obj_stem}"
+
             # Convert each mesh in the object
             obj_mesh_primitives = []
             for mesh in obj.model.meshes:
@@ -431,7 +474,7 @@ class StageBuilder:
                     ))
 
                     ymo_mat = obj.model.materials[sm.material_index] if sm.material_index < len(obj.model.materials) else YmoMaterial(sm.material_index, 0, 1.0, "", "", b"")
-                    gltf_mat_idx = get_or_create_material(ymo_mat, ref_p)
+                    gltf_mat_idx = get_or_create_material(ymo_mat, ref_p, is_trigger=is_trigger)
 
                     obj_mesh_primitives.append(Primitive(
                         attributes=attrs,
@@ -461,7 +504,8 @@ class StageBuilder:
                 extras={
                     "object_index": obj.index,
                     "asset_path": obj.ymo_path_str,
-                    "is_terrain": is_base
+                    "is_terrain": is_base,
+                    "is_trigger": is_trigger
                 }
             ))
             stage_children_nodes.append(gltf_node_idx)

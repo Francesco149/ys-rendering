@@ -4,6 +4,7 @@ Launches Blender on Windows host (or Linux WSL) to inspect extracted Ys models a
 Automatically sets up:
 - Native .blend project generation in local Windows Temp folder
 - Discrete Outliner nodes for Terrain and every placed Prop
+- Dedicated, hidden-by-default Collections for Triggers and Collision meshes
 - Directional Sun key & fill lighting and ambient world illumination
 - 3D Viewport Shading automatically switched to 'RENDERED' mode
 """
@@ -109,8 +110,40 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 {import_cmd}
 
 scene = bpy.context.scene
+main_coll = scene.collection
 
-# 3. Set up World Ambient Lighting
+# 3. Create dedicated Collections for Triggers and Collisions
+trigger_coll = bpy.data.collections.new("Triggers")
+collision_coll = bpy.data.collections.new("Collision")
+main_coll.children.link(trigger_coll)
+main_coll.children.link(collision_coll)
+
+# Organize objects into collections
+for obj in list(scene.objects):
+    name_lower = obj.name.lower()
+    is_trig = "trigger" in name_lower or "2mdoor" in name_lower or (obj.get("is_trigger", False))
+    is_coll = "collision" in name_lower or (obj.get("is_collision", False))
+    
+    if is_trig:
+        for c in list(obj.users_collection):
+            c.objects.unlink(obj)
+        trigger_coll.objects.link(obj)
+        obj.hide_viewport = True
+        obj.hide_render = True
+    elif is_coll:
+        for c in list(obj.users_collection):
+            c.objects.unlink(obj)
+        collision_coll.objects.link(obj)
+        obj.hide_viewport = True
+        obj.hide_render = True
+
+# Hide collections by default in viewport and render
+trigger_coll.hide_viewport = True
+trigger_coll.hide_render = True
+collision_coll.hide_viewport = True
+collision_coll.hide_render = True
+
+# 4. Set up World Ambient Lighting
 if scene.world is None:
     scene.world = bpy.data.worlds.new("World")
 if hasattr(scene.world, "node_tree") and scene.world.node_tree:
@@ -119,28 +152,27 @@ if hasattr(scene.world, "node_tree") and scene.world.node_tree:
         bg.inputs[0].default_value = (0.6, 0.6, 0.65, 1.0)
         bg.inputs[1].default_value = 1.0
 
-# 4. Add Directional Sun Key Light
+# 5. Add Directional Sun Key Light
 key_data = bpy.data.lights.new("DirectionalSun", type='SUN')
 key_data.energy = 4.5
 key_obj = bpy.data.objects.new("DirectionalSun", key_data)
 scene.collection.objects.link(key_obj)
 key_obj.rotation_euler = (0.75, 0.35, 0.6)
 
-# 5. Add Directional Sun Fill Light
+# 6. Add Directional Sun Fill Light
 fill_data = bpy.data.lights.new("FillSun", type='SUN')
 fill_data.energy = 2.0
 fill_obj = bpy.data.objects.new("FillSun", fill_data)
 scene.collection.objects.link(fill_obj)
 fill_obj.rotation_euler = (-0.75, -0.35, -0.6)
 
-# 6. Save as native .blend file
+# 7. Save as native .blend file
 bpy.ops.wm.save_as_mainfile(filepath=r'{blend_win}')
 """
     prep_script_wsl = temp_dir_wsl / f"prep_{model_path_wsl.stem}.py"
     prep_script_wsl.write_text(prep_code, encoding="utf-8")
     prep_script_win = wsl_to_win_path(prep_script_wsl)
 
-    # Run headless Blender to generate the .blend file
     subprocess.run(
         [str(blender_bin), "--background", "--python", str(prep_script_win)],
         stdout=subprocess.DEVNULL,
@@ -177,7 +209,6 @@ def launch_blender(
         print(f"Opening: {target_blend_win}")
         print("✓ Scene loaded with discrete Terrain & Props, Directional Sun light, and RENDERED viewport mode.")
 
-        # Launch Blender with the native .blend project file and a GUI viewport shading command
         shading_py = "import bpy; [setattr(sp.shading, 'type', 'RENDERED') for win in bpy.context.window_manager.windows for a in win.screen.areas if a.type=='VIEW_3D' for sp in a.spaces if sp.type=='VIEW_3D']; [setattr(sp.shading, 'use_scene_lights', True) for win in bpy.context.window_manager.windows for a in win.screen.areas if a.type=='VIEW_3D' for sp in a.spaces if sp.type=='VIEW_3D']; [setattr(sp.shading, 'use_scene_world', True) for win in bpy.context.window_manager.windows for a in win.screen.areas if a.type=='VIEW_3D' for sp in a.spaces if sp.type=='VIEW_3D']"
 
         args = [str(win_blender), target_blend_win, "--python-expr", shading_py]
