@@ -4,9 +4,8 @@ Launches Blender on Windows host (or Linux WSL) to inspect extracted Ys models a
 Automatically sets up:
 - Clean scene setup (no default cube)
 - Asset import (.glb, .gltf, .obj)
-- Directional Sun lighting & ambient world illumination
-- 3D Viewport Shading set to 'RENDERED' mode
-- Auto-focus / framing on imported map bounds
+- Directional Sun key & fill lighting and ambient world illumination
+- 3D Viewport Shading automatically set to 'RENDERED' mode
 """
 
 import os
@@ -14,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 WINDOWS_BLENDER_CANDIDATES = [
     "/mnt/c/Program Files/Blender Foundation/Blender 5.1/blender.exe",
@@ -55,6 +54,25 @@ def find_windows_blender() -> Optional[Path]:
 
     return None
 
+def find_windows_temp() -> Tuple[Path, str]:
+    """Finds the local Windows Temp folder accessible from WSL."""
+    user = os.environ.get("USER", "headpats")
+    candidates = [
+        Path(f"/mnt/c/Users/{user}/AppData/Local/Temp"),
+        Path("/mnt/c/Users/headpats/AppData/Local/Temp"),
+        Path("/mnt/c/Windows/Temp"),
+        Path("/mnt/c/Temp"),
+    ]
+    for c in candidates:
+        if c.exists():
+            win_path = wsl_to_win_path(c)
+            return c, win_path
+    
+    # Fallback to current dir
+    cur = Path("output/_scripts")
+    cur.mkdir(parents=True, exist_ok=True)
+    return cur, wsl_to_win_path(cur)
+
 def wsl_to_win_path(path: Path) -> str:
     path = Path(path).resolve()
     try:
@@ -79,15 +97,15 @@ def generate_startup_script(model_path_str: str, ext: str) -> str:
     return f"""import bpy
 import mathutils
 
-# Clear factory scene
+# 1. Clear factory scene
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
-# Import model
+# 2. Import model
 {import_cmd}
 
 scene = bpy.context.scene
 
-# Set up world ambient lighting
+# 3. Set up World Ambient Lighting
 if scene.world is None:
     scene.world = bpy.data.worlds.new("World")
 if hasattr(scene.world, "node_tree") and scene.world.node_tree:
@@ -96,33 +114,32 @@ if hasattr(scene.world, "node_tree") and scene.world.node_tree:
         bg.inputs[0].default_value = (0.6, 0.6, 0.65, 1.0)
         bg.inputs[1].default_value = 1.0
 
-# Add directional key Sun light
-light_data = bpy.data.lights.new("DirectionalSun", type='SUN')
-light_data.energy = 4.5
-light_obj = bpy.data.objects.new("DirectionalSun", light_data)
-scene.collection.objects.link(light_obj)
-light_obj.rotation_euler = (0.75, 0.35, 0.6)
+# 4. Add Directional Key Sun Light
+key_data = bpy.data.lights.new("KeySun", type="SUN")
+key_data.energy = 4.5
+key_obj = bpy.data.objects.new("KeySun", key_data)
+scene.collection.objects.link(key_obj)
+key_obj.rotation_euler = (0.75, 0.35, 0.6)
 
-# Add directional fill Sun light
-fill_data = bpy.data.lights.new("FillSun", type='SUN')
+# 5. Add Directional Fill Sun Light
+fill_data = bpy.data.lights.new("FillSun", type="SUN")
 fill_data.energy = 2.0
 fill_obj = bpy.data.objects.new("FillSun", fill_data)
 scene.collection.objects.link(fill_obj)
 fill_obj.rotation_euler = (-0.75, -0.35, -0.6)
 
-# Set 3D Viewport shading to RENDERED mode across all viewports
+# 6. Switch Viewport Shading to RENDERED mode once UI is loaded
 def set_viewport_rendered():
     for window in bpy.context.window_manager.windows:
         for area in window.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type == "VIEW_3D":
                 for space in area.spaces:
-                    if space.type == 'VIEW_3D':
-                        space.shading.type = 'RENDERED'
+                    if space.type == "VIEW_3D":
+                        space.shading.type = "RENDERED"
                         space.shading.use_scene_lights = True
                         space.shading.use_scene_world = True
 
-# Execute viewport mode set
-set_viewport_rendered()
+bpy.app.timers.register(set_viewport_rendered, first_interval=0.2)
 """
 
 def launch_blender(
@@ -138,40 +155,40 @@ def launch_blender(
     win_blender = find_windows_blender() if use_windows else None
     ext = model_path.suffix.lower()
 
-    # Create temporary startup script in accessible directory
-    script_dir = Path("output/_scripts")
-    script_dir.mkdir(parents=True, exist_ok=True)
-    script_p = script_dir / f"open_{model_path.stem}.py"
-
     if use_windows and win_blender and win_blender.exists():
+        wsl_temp, win_temp_str = find_windows_temp()
+        script_file_wsl = wsl_temp / "ys_open_blender.py"
+        script_file_win = os.path.join(win_temp_str, "ys_open_blender.py")
+
         win_model_p = wsl_to_win_path(model_path)
         print(f"Launching Windows Blender ({win_blender.name})...")
         print(f"Model: {win_model_p}")
-        print("Setting up Directional Sun light and Viewport RENDERED mode...")
+        print("Importing model, adding directional lights, and switching to RENDERED mode...")
 
         script_content = generate_startup_script(win_model_p, ext)
-        script_p.write_text(script_content, encoding="utf-8")
-        win_script_p = wsl_to_win_path(script_p)
+        script_file_wsl.write_text(script_content, encoding="utf-8")
 
-        args = [str(win_blender), "--python", win_script_p]
+        args = [str(win_blender), "--python", script_file_win]
 
         try:
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("Windows Blender launched successfully (lit & rendered).")
+            print("✓ Windows Blender launched successfully.")
             return
         except OSError:
             win_blender_win = wsl_to_win_path(win_blender)
-            cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, "--python", win_script_p]
+            cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, "--python", script_file_win]
             subprocess.Popen(cmd_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("Windows Blender launched successfully via cmd.exe.")
+            print("✓ Windows Blender launched successfully via cmd.exe.")
             return
 
     # Linux WSL fallback
     print("Launching Linux Blender...")
+    temp_dir = Path("/tmp")
+    script_file = temp_dir / "ys_open_blender.py"
     script_content = generate_startup_script(str(model_path), ext)
-    script_p.write_text(script_content, encoding="utf-8")
+    script_file.write_text(script_content, encoding="utf-8")
 
-    args = ["blender", "--python", str(script_p)]
+    args = ["blender", "--python", str(script_file)]
     if background:
         args.append("--background")
 
