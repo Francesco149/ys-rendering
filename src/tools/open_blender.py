@@ -2,7 +2,7 @@
 """
 Launches Blender on Windows host (or Linux WSL) to inspect extracted Ys models and stages.
 Automatically detects Windows Blender installation, ensures WSL interop is active,
-and translates WSL2 paths to Windows UNC paths.
+translates WSL2 paths to Windows UNC paths, and imports GLB/OBJ models directly.
 """
 
 import os
@@ -73,34 +73,54 @@ def launch_blender(
 
     ensure_wsl_interop()
     win_blender = find_windows_blender() if use_windows else None
+    ext = model_path.suffix.lower()
 
     if use_windows and win_blender and win_blender.exists():
         win_model_p = wsl_to_win_path(model_path)
         print(f"Launching Windows Blender ({win_blender.name})...")
-        print(f"Opening: {win_model_p}")
+        print(f"Importing: {win_model_p}")
 
         win_blender_str = str(win_blender)
-        args = [win_blender_str, win_model_p]
+        if ext == ".blend":
+            args = [win_blender_str, win_model_p]
+        elif ext in (".glb", ".gltf"):
+            py_code = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath=r'{win_model_p}')"
+            args = [win_blender_str, "--python-expr", py_code]
+        elif ext == ".obj":
+            py_code = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.wm.obj_import(filepath=r'{win_model_p}')"
+            args = [win_blender_str, "--python-expr", py_code]
+        else:
+            args = [win_blender_str, win_model_p]
+
         if import_script and Path(import_script).exists():
             win_script_p = wsl_to_win_path(Path(import_script))
             args.extend(["--python", win_script_p])
 
         try:
-            # Direct binary invocation via WSLInterop
             subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("Windows Blender launched successfully.")
+            print("Windows Blender launched successfully with imported model.")
             return
         except OSError:
-            # Fallback invocation via cmd.exe start
             win_blender_win = wsl_to_win_path(win_blender)
-            cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, win_model_p]
+            if ext in (".glb", ".gltf"):
+                cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, "--python-expr", f"\"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath=r'{win_model_p}')\""]
+            else:
+                cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, win_model_p]
             subprocess.Popen(cmd_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print("Windows Blender launched successfully via cmd.exe.")
             return
 
     # Linux WSL fallback
     print("Launching Linux Blender...")
-    args = ["blender", str(model_path)]
+    if ext in (".glb", ".gltf"):
+        py_code = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath=r'{model_path}')"
+        args = ["blender", "--python-expr", py_code]
+    elif ext == ".obj":
+        py_code = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.wm.obj_import(filepath=r'{model_path}')"
+        args = ["blender", "--python-expr", py_code]
+    else:
+        args = ["blender", str(model_path)]
+
     if import_script and Path(import_script).exists():
         args.extend(["--python", str(import_script)])
     if background:
