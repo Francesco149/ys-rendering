@@ -115,13 +115,13 @@ ys-rendering/
 
 ## 📝 Git Commit Conventions for Future Sessions
 
-All commits created in this repository MUST include the model slug co-author trailer:
+All commits created in this repository MUST include the model slug co-author trailer with a valid GitHub noreply email address:
 ```
-Co-authored-by: <model-slug> <<model-slug>>
+Co-authored-by: <model-slug> <<username>@users.noreply.github.com>
 ```
 Example:
 ```
 feat(converter): add support for animated mesh vertex morphs
 
-Co-authored-by: google-antigravity/gemini-3.7-flash-tiered <google-antigravity/gemini-3.7-flash-tiered>
+Co-authored-by: google-antigravity/gemini-3.7-flash-tiered <google-antigravity@users.noreply.github.com>
 ```
