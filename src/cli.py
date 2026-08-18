@@ -55,8 +55,9 @@ def cmd_convert_model(args):
     model = YmoParser.parse_file(ymo_path)
     print(f"Parsed {model.filename}: {len(model.materials)} materials, {len(model.meshes)} meshes")
 
+    include_coll = getattr(args, "include_collision", False)
     if args.format.lower() == "glb" or out_path.suffix.lower() == ".glb":
-        GltfExporter.export_glb(model, ymo_path, out_path)
+        GltfExporter.export_glb(model, ymo_path, out_path, include_collision=include_coll)
     else:
         ObjExporter.export_obj(model, ymo_path, out_path)
 
@@ -67,10 +68,10 @@ def cmd_convert_stage(args):
     
     assets_root = Path(args.assets_root or "extracted")
     out_path = Path(args.output or f"output/{sob_path.stem}_composite.glb")
-    
     scene = StageBuilder.parse_sob(sob_path, assets_root)
     print(f"Parsed stage {scene.stage_name} with {len(scene.placed_objects)} placed objects")
-    StageBuilder.export_composite_glb(scene, assets_root, out_path)
+    include_coll = getattr(args, "include_collision", False)
+    StageBuilder.export_composite_glb(scene, assets_root, out_path, include_collision=include_coll)
 
 def cmd_batch_convert(args):
     assets_root = Path(args.assets_root or "extracted")
@@ -119,6 +120,7 @@ def main():
     p_conv.add_argument("input", help="Path to .YMO file")
     p_conv.add_argument("--output", "-o", help="Output GLB/OBJ path")
     p_conv.add_argument("--format", default="glb", choices=["glb", "obj"], help="Output format")
+    p_conv.add_argument("--include-collision", "-c", action="store_true", help="Include collision mesh layers in GLB")
     p_conv.set_defaults(func=cmd_convert_model)
 
     # Convert stage
@@ -126,9 +128,8 @@ def main():
     p_stage.add_argument("input", help="Path to .SOB file")
     p_stage.add_argument("--assets-root", "-r", default="extracted", help="Extracted assets root directory")
     p_stage.add_argument("--output", "-o", help="Output GLB path")
+    p_stage.add_argument("--include-collision", "-c", action="store_true", help="Include collision mesh layers in GLB")
     p_stage.set_defaults(func=cmd_convert_stage)
-
-    # Batch convert
     p_batch = subparsers.add_parser("batch-convert", help="Batch convert all stages and models")
     p_batch.add_argument("--assets-root", "-r", default="extracted", help="Extracted assets root directory")
     p_batch.add_argument("--output", "-o", default="output/all_stages", help="Output directory")

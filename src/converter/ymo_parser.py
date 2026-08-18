@@ -176,11 +176,22 @@ class YmoParser:
                     stride = f1
                     pos += 32
                     break
+
+                # In Falcom Napishtim Engine YMO format, f6 is a 1-based material index:
+                # 1 -> Material 0, 2 -> Material 1, ..., N -> Material N-1, 0 -> Material N-1 (wrap-around)
+                if mat_count > 0:
+                    if f6 > 0:
+                        resolved_mat_idx = (f6 - 1) % mat_count
+                    else:
+                        resolved_mat_idx = (mat_count - 1)
+                else:
+                    resolved_mat_idx = 0
+
                 submeshes.append(YmoSubmesh(
                     triangle_count=f0,
                     vertex_start=f1,
                     vertex_count=f2,
-                    material_index=f6,
+                    material_index=resolved_mat_idx,
                     cumulative_verts_end=f1 + f2
                 ))
                 pos += 32
@@ -315,3 +326,6 @@ if __name__ == "__main__":
     print(f"  Meshes ({len(model.meshes)}):")
     for m in model.meshes:
         print(f"    '{m.name}': {len(m.positions)} vertices, {len(m.indices)} triangles across {len(m.submeshes)} submeshes")
+        for sm in m.submeshes:
+            m_name = model.materials[sm.material_index].texture_name if sm.material_index < len(model.materials) else "OUT_OF_BOUNDS"
+            print(f"      Submesh: tris={sm.triangle_count:4d}, v_start={sm.vertex_start:5d}, v_count={sm.vertex_count:5d} -> Mat[{sm.material_index:2d}] ({m_name})")

@@ -155,10 +155,9 @@ class StageBuilder:
         )
 
     @classmethod
-    def export_composite_glb(cls, scene: StageScene, assets_root: Path, output_path: Path) -> Path:
+    def export_composite_glb(cls, scene: StageScene, assets_root: Path, output_path: Path, include_collision: bool = False) -> Path:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Merge all placed objects into a unified YmoModel with transformed vertices
         merged_materials: List[YmoMaterial] = []
         mat_tex_to_merged_idx: Dict[str, int] = {}
@@ -271,7 +270,7 @@ class StageBuilder:
 
         # Export using GLTF exporter
         ref_path = scene.base_model_path if scene.base_model_path else assets_root / f"MAP/{scene.stage_name}/{scene.stage_name}.YMO"
-        GltfExporter.export_glb(composite_model, ref_path, output_path)
+        GltfExporter.export_glb(composite_model, ref_path, output_path, include_collision=include_collision)
         print(f"Exported composite stage scene {scene.stage_name} to {output_path} ({len(final_pos)} vertices, {len(final_tris)} triangles)")
         return output_path
 

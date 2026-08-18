@@ -98,6 +98,7 @@ class GltfExporter:
         model_path: Path,
         output_path: Path,
         collision_meshes: Optional[List[YcoCollisionMesh]] = None,
+        include_collision: bool = False,
         embed_textures: bool = True
     ) -> Path:
         output_path = Path(output_path)
@@ -362,8 +363,8 @@ class GltfExporter:
         gltf.nodes.append(Node(name=model.filename.split(".")[0], mesh=main_mesh_idx))
         root_children.append(main_node_idx)
 
-        # Auto-discover and add collision meshes if not explicitly provided
-        if collision_meshes is None and model_path:
+        # Auto-discover collision meshes if enabled
+        if include_collision and collision_meshes is None and model_path:
             discovered_coll = []
             stage_dir = model_path.parent
             base_name = model_path.stem.split("__")[0]
@@ -376,8 +377,8 @@ class GltfExporter:
                         pass
             collision_meshes = discovered_coll
 
-        # Add Collision Meshes
-        if collision_meshes:
+        # Add Collision Meshes if requested
+        if include_collision and collision_meshes:
             for coll in collision_meshes:
                 if len(coll.positions) == 0:
                     continue
