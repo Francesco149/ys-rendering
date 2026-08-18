@@ -93,6 +93,23 @@ ys-rendering/
 
 ---
 
+## 🧭 Falcom Pipeline Analysis & Scrapped Experiment
+
+- **`docs/FALCOM_PIPELINE.md`** — distilled analysis of how Falcom likely
+  authored Ys levels (grid-aligned tiling → baked composite splats →
+  vertex-color AO → black-fade geometry → SOB assembly) + a built-in-only
+  Blender → Godot recreation table. Read this before any level-design work.
+- **`/opt/scratch/godot-ys`** — archived copy of a scrapped custom-tooling
+  Blender → Godot pipeline experiment (addon + import plugin + shaders,
+  commits `eb0eaa4`..`777c528`). Kept for reference only; the recreation
+  approach in FALCOM_PIPELINE.md deliberately uses stock tools instead.
+- **Scene metadata formats** parsed from `extracted/MAP/*`: `SCM` = camera
+  AABB + pitch per room, `SFO` = play-area bounds, `SCT` = scripted camera
+  transitions, `SEN` = scene transition graph. See docs/FALCOM_PIPELINE.md
+  appendix.
+
+---
+
 ## 📝 Git Commit Conventions for Future Sessions
 
 All commits created in this repository MUST include the model slug co-author trailer:
