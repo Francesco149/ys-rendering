@@ -2,7 +2,7 @@
 """
 Falcom Ys Stage & Scene Assembler.
 Parses .SOB (Scene Object Placement) files, loads base map geometry and placed props/doors/objects,
-and combines them into a full composite 3D scene (glTF 2.0 / GLB / OBJ).
+and combines them into a modular composite 3D scene (glTF 2.0 / GLB) with separate nodes for every prop and terrain.
 """
 
 import math
@@ -12,9 +12,28 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 
+import pygltflib
+from pygltflib import (
+    GLTF2,
+    Scene,
+    Node,
+    Mesh,
+    Primitive,
+    Attributes,
+    Buffer,
+    BufferView,
+    Accessor,
+    Material,
+    PbrMetallicRoughness,
+    Texture,
+    TextureInfo,
+    Image as GltfImage,
+    Sampler,
+)
+
 from src.converter.ymo_parser import YmoModel, YmoParser, YmoMesh, YmoSubmesh, YmoMaterial
+from src.converter.yco_parser import YcoCollisionMesh, YcoParser
 from src.converter.gltf_exporter import GltfExporter
-from src.converter.obj_exporter import ObjExporter
 
 @dataclass
 class PlacedObject:
@@ -40,7 +59,6 @@ class StageBuilder:
         rx, ry, rz = rot
         sx, sy, sz = scale
 
-        # Rotation matrices
         cx, sx_val = math.cos(rx), math.sin(rx)
         cy, sy_val = math.cos(ry), math.sin(ry)
         cz, sz_val = math.cos(rz), math.sin(rz)
@@ -72,7 +90,6 @@ class StageBuilder:
         T[1, 3] = py
         T[2, 3] = pz
 
-        # In Falcom engine: T * Ry * Rx * Rz * S or T * R * S
         R = Ry @ Rx @ Rz
         return T @ R @ S
 
@@ -140,7 +157,6 @@ class StageBuilder:
                 resolved_path=resolved_p
             )
 
-            # Check if this is the base stage model (usually object 0 at 0,0,0)
             if i == 0 or Path(ymo_rel).stem.upper() == stage_name.upper():
                 base_model_path = resolved_p
                 base_model = obj_model
@@ -155,123 +171,313 @@ class StageBuilder:
         )
 
     @classmethod
-    def export_composite_glb(cls, scene: StageScene, assets_root: Path, output_path: Path, include_collision: bool = False) -> Path:
+    def export_composite_glb(
+        cls,
+        scene: StageScene,
+        assets_root: Path,
+        output_path: Path,
+        include_collision: bool = False
+    ) -> Path:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Merge all placed objects into a unified YmoModel with transformed vertices
-        merged_materials: List[YmoMaterial] = []
-        mat_tex_to_merged_idx: Dict[str, int] = {}
 
-        merged_positions = []
-        merged_normals = []
-        merged_colors = []
-        merged_uvs = []
-        merged_triangles = []
-        merged_submeshes: List[YmoSubmesh] = []
-        submesh_triangles_list: List[np.ndarray] = []
+        gltf = GLTF2(
+            scenes=[Scene(nodes=[0])],
+            scene=0,
+            nodes=[],
+            meshes=[],
+            materials=[],
+            textures=[],
+            images=[],
+            samplers=[Sampler(magFilter=pygltflib.LINEAR, minFilter=pygltflib.LINEAR_MIPMAP_LINEAR)],
+            accessors=[],
+            bufferViews=[],
+            buffers=[Buffer(byteLength=0)],
+        )
 
-        total_vert_offset = 0
+        binary_blob = bytearray()
+        mat_cache: Dict[str, int] = {}
+        tex_cache: Dict[str, int] = {}
+
+        def get_or_create_material(ymo_mat: YmoMaterial, ref_model_path: Path) -> int:
+            tex_p = GltfExporter.resolve_texture(ref_model_path, ymo_mat.texture_name)
+            tex_key = str(tex_p.resolve()) if (tex_p and tex_p.exists()) else f"no_tex_{ymo_mat.index}"
+            mat_key = f"{tex_key}_{ymo_mat.flags}_{ymo_mat.alpha:.3f}"
+
+            if mat_key in mat_cache:
+                return mat_cache[mat_key]
+
+            gltf_tex_idx = None
+            if tex_p and tex_p.exists():
+                if tex_key in tex_cache:
+                    gltf_tex_idx = tex_cache[tex_key]
+                else:
+                    is_add = bool(ymo_mat.texture_name and ymo_mat.texture_name.upper().startswith("Z_"))
+                    png_data = GltfExporter.dds_to_png_bytes(tex_p, is_additive=is_add)
+                    while len(binary_blob) % 4 != 0:
+                        binary_blob.append(0)
+
+                    img_bv_idx = len(gltf.bufferViews)
+                    img_offset = len(binary_blob)
+                    img_length = len(png_data)
+                    binary_blob.extend(png_data)
+
+                    gltf.bufferViews.append(BufferView(
+                        buffer=0,
+                        byteOffset=img_offset,
+                        byteLength=img_length,
+                    ))
+
+                    img_idx = len(gltf.images)
+                    gltf.images.append(GltfImage(
+                        bufferView=img_bv_idx,
+                        mimeType="image/png",
+                        name=tex_p.stem
+                    ))
+
+                    gltf_tex_idx = len(gltf.textures)
+                    gltf.textures.append(Texture(
+                        sampler=0,
+                        source=img_idx,
+                        name=tex_p.stem
+                    ))
+                    tex_cache[tex_key] = gltf_tex_idx
+
+            pbr = PbrMetallicRoughness(
+                metallicFactor=0.0,
+                roughnessFactor=0.85,
+            )
+            if gltf_tex_idx is not None:
+                pbr.baseColorTexture = TextureInfo(index=gltf_tex_idx)
+
+            has_texture_alpha = False
+            if tex_p and tex_p.exists():
+                try:
+                    chk_im = Image.open(tex_p) if 'Image' in globals() else None
+                    if chk_im and (chk_im.mode in ("RGBA", "LA") or "transparency" in chk_im.info):
+                        chk_arr = np.array(chk_im.convert("RGBA"))
+                        if (chk_arr[:, :, 3] < 250).any():
+                            has_texture_alpha = True
+                except Exception:
+                    pass
+
+            alpha_mode = "OPAQUE"
+            alpha_cutoff = None
+            if ymo_mat.alpha < 0.99 or (ymo_mat.texture_name and ymo_mat.texture_name.upper().startswith("Z_")):
+                alpha_mode = "BLEND"
+            elif has_texture_alpha:
+                alpha_mode = "MASK"
+                alpha_cutoff = 0.5
+
+            gltf_mat_idx = len(gltf.materials)
+            gltf.materials.append(Material(
+                name=f"Mat_{ymo_mat.texture_name or 'default'}",
+                pbrMetallicRoughness=pbr,
+                alphaMode=alpha_mode,
+                alphaCutoff=alpha_cutoff,
+                doubleSided=True
+            ))
+            mat_cache[mat_key] = gltf_mat_idx
+            return gltf_mat_idx
+
+        # Build each placed object as a discrete Node & Mesh
+        stage_children_nodes = []
+        total_verts_count = 0
+        total_tris_count = 0
 
         for obj in scene.placed_objects:
-            if not obj.model:
-                continue
-
-            matrix = cls.euler_to_matrix(obj.position, obj.rotation_euler, obj.scale)
-            # Map object materials to merged materials
-            obj_mat_to_merged: Dict[int, int] = {}
-            for mat in obj.model.materials:
-                key = mat.texture_name.lower()
-                if key in mat_tex_to_merged_idx:
-                    obj_mat_to_merged[mat.index] = mat_tex_to_merged_idx[key]
-                else:
-                    new_idx = len(merged_materials)
-                    merged_materials.append(YmoMaterial(
-                        index=new_idx,
-                        flags=mat.flags,
-                        alpha=mat.alpha,
-                        texture_path=mat.texture_path,
-                        texture_name=mat.texture_name,
-                        raw_data=mat.raw_data
-                    ))
-                    mat_tex_to_merged_idx[key] = new_idx
-                    obj_mat_to_merged[mat.index] = new_idx
-
-            # Transform and append mesh geometry
+            ref_p = obj.resolved_path if obj.resolved_path else Path(obj.ymo_path_str)
+            obj_stem = Path(obj.ymo_path_str.replace("\\", "/")).stem
+            is_base = (obj.index == 0 or obj_stem.upper() == scene.stage_name.upper())
+            node_name = "Terrain" if is_base else f"Prop_{obj.index:02d}_{obj_stem}"
+            # Convert each mesh in the object
+            obj_mesh_primitives = []
             for mesh in obj.model.meshes:
-                if len(mesh.positions) == 0:
+                num_verts = len(mesh.positions)
+                if num_verts == 0:
                     continue
 
-                # Transform positions
-                homo_pos = np.hstack([mesh.positions, np.ones((len(mesh.positions), 1), dtype=np.float32)])
-                trans_pos = (homo_pos @ matrix.T)[:, :3]
+                total_verts_count += num_verts
+                total_tris_count += len(mesh.indices)
 
-                # Transform normals
-                rot_mat = matrix[:3, :3]
-                inv_rot = np.linalg.inv(rot_mat).T
-                trans_norm = (mesh.normals @ inv_rot.T)
-                norm_lengths = np.linalg.norm(trans_norm, axis=1, keepdims=True)
-                norm_lengths[norm_lengths == 0] = 1.0
-                trans_norm = trans_norm / norm_lengths
+                # Positions
+                while len(binary_blob) % 4 != 0:
+                    binary_blob.append(0)
+                pos_offset = len(binary_blob)
+                pos_data = mesh.positions.astype(np.float32).tobytes()
+                binary_blob.extend(pos_data)
+                pos_bv_idx = len(gltf.bufferViews)
+                gltf.bufferViews.append(BufferView(
+                    buffer=0,
+                    byteOffset=pos_offset,
+                    byteLength=len(pos_data),
+                    target=pygltflib.ARRAY_BUFFER
+                ))
+                pos_acc_idx = len(gltf.accessors)
+                gltf.accessors.append(Accessor(
+                    bufferView=pos_bv_idx,
+                    byteOffset=0,
+                    componentType=pygltflib.FLOAT,
+                    count=num_verts,
+                    type=pygltflib.VEC3,
+                    min=mesh.positions.min(axis=0).tolist(),
+                    max=mesh.positions.max(axis=0).tolist(),
+                ))
 
-                merged_positions.append(trans_pos)
-                merged_normals.append(trans_norm)
-                merged_colors.append(mesh.colors)
-                merged_uvs.append(mesh.uvs)
+                # Normals
+                while len(binary_blob) % 4 != 0:
+                    binary_blob.append(0)
+                norm_offset = len(binary_blob)
+                norm_data = mesh.normals.astype(np.float32).tobytes()
+                binary_blob.extend(norm_data)
+                norm_bv_idx = len(gltf.bufferViews)
+                gltf.bufferViews.append(BufferView(
+                    buffer=0,
+                    byteOffset=norm_offset,
+                    byteLength=len(norm_data),
+                    target=pygltflib.ARRAY_BUFFER
+                ))
+                norm_acc_idx = len(gltf.accessors)
+                gltf.accessors.append(Accessor(
+                    bufferView=norm_bv_idx,
+                    byteOffset=0,
+                    componentType=pygltflib.FLOAT,
+                    count=num_verts,
+                    type=pygltflib.VEC3,
+                ))
+
+                # UVs
+                uvs_gltf = mesh.uvs.copy()
+                while len(binary_blob) % 4 != 0:
+                    binary_blob.append(0)
+                uv_offset = len(binary_blob)
+                uv_data = uvs_gltf.astype(np.float32).tobytes()
+                binary_blob.extend(uv_data)
+                uv_bv_idx = len(gltf.bufferViews)
+                gltf.bufferViews.append(BufferView(
+                    buffer=0,
+                    byteOffset=uv_offset,
+                    byteLength=len(uv_data),
+                    target=pygltflib.ARRAY_BUFFER
+                ))
+                uv_acc_idx = len(gltf.accessors)
+                gltf.accessors.append(Accessor(
+                    bufferView=uv_bv_idx,
+                    byteOffset=0,
+                    componentType=pygltflib.FLOAT,
+                    count=num_verts,
+                    type=pygltflib.VEC2,
+                ))
+
+                # Colors
+                while len(binary_blob) % 4 != 0:
+                    binary_blob.append(0)
+                col_offset = len(binary_blob)
+                col_data = mesh.colors.astype(np.uint8).tobytes()
+                binary_blob.extend(col_data)
+                col_bv_idx = len(gltf.bufferViews)
+                gltf.bufferViews.append(BufferView(
+                    buffer=0,
+                    byteOffset=col_offset,
+                    byteLength=len(col_data),
+                    target=pygltflib.ARRAY_BUFFER
+                ))
+                col_acc_idx = len(gltf.accessors)
+                gltf.accessors.append(Accessor(
+                    bufferView=col_bv_idx,
+                    byteOffset=0,
+                    componentType=pygltflib.UNSIGNED_BYTE,
+                    normalized=True,
+                    count=num_verts,
+                    type=pygltflib.VEC4,
+                ))
+
+                attrs = Attributes(
+                    POSITION=pos_acc_idx,
+                    NORMAL=norm_acc_idx,
+                    TEXCOORD_0=uv_acc_idx,
+                    COLOR_0=col_acc_idx,
+                )
 
                 for s_idx, sm in enumerate(mesh.submeshes):
-                    merged_mat_idx = obj_mat_to_merged.get(sm.material_index, 0)
                     sm_tris = mesh.submesh_triangles[s_idx] if s_idx < len(mesh.submesh_triangles) else mesh.indices
                     if len(sm_tris) == 0:
                         continue
 
-                    offset_tris = sm_tris + total_vert_offset
-                    submesh_triangles_list.append(offset_tris)
-                    merged_triangles.append(offset_tris)
+                    idx_flat = sm_tris.flatten().astype(np.uint32)
+                    while len(binary_blob) % 4 != 0:
+                        binary_blob.append(0)
+                    idx_offset = len(binary_blob)
+                    idx_data = idx_flat.tobytes()
+                    binary_blob.extend(idx_data)
 
-                    merged_submeshes.append(YmoSubmesh(
-                        triangle_count=len(offset_tris),
-                        vertex_start=sm.vertex_start + total_vert_offset,
-                        vertex_count=sm.vertex_count,
-                        material_index=merged_mat_idx,
-                        cumulative_verts_end=total_vert_offset + len(mesh.positions)
+                    idx_bv_idx = len(gltf.bufferViews)
+                    gltf.bufferViews.append(BufferView(
+                        buffer=0,
+                        byteOffset=idx_offset,
+                        byteLength=len(idx_data),
+                        target=pygltflib.ELEMENT_ARRAY_BUFFER
                     ))
 
-                total_vert_offset += len(mesh.positions)
+                    idx_acc_idx = len(gltf.accessors)
+                    gltf.accessors.append(Accessor(
+                        bufferView=idx_bv_idx,
+                        byteOffset=0,
+                        componentType=pygltflib.UNSIGNED_INT,
+                        count=len(idx_flat),
+                        type=pygltflib.SCALAR,
+                        min=[int(idx_flat.min())],
+                        max=[int(idx_flat.max())],
+                    ))
 
-        if not merged_positions:
-            raise ValueError(f"No geometry found in stage scene {scene.stage_name}")
+                    ymo_mat = obj.model.materials[sm.material_index] if sm.material_index < len(obj.model.materials) else YmoMaterial(sm.material_index, 0, 1.0, "", "", b"")
+                    gltf_mat_idx = get_or_create_material(ymo_mat, ref_p)
 
-        final_pos = np.vstack(merged_positions)
-        final_norm = np.vstack(merged_normals)
-        final_col = np.vstack(merged_colors)
-        final_uvs = np.vstack(merged_uvs)
-        final_tris = np.vstack(merged_triangles) if merged_triangles else np.zeros((0, 3), dtype=np.uint32)
+                    obj_mesh_primitives.append(Primitive(
+                        attributes=attrs,
+                        indices=idx_acc_idx,
+                        material=gltf_mat_idx,
+                        mode=pygltflib.TRIANGLES
+                    ))
 
-        composite_mesh = YmoMesh(
-            name=scene.stage_name,
-            submeshes=merged_submeshes,
-            vertex_stride=36,
-            positions=final_pos,
-            normals=final_norm,
-            colors=final_col,
-            uvs=final_uvs,
-            indices=final_tris,
-            submesh_triangles=submesh_triangles_list
-        )
+            if not obj_mesh_primitives:
+                continue
 
-        composite_model = YmoModel(
-            filename=f"{scene.stage_name}_composite.ymo",
-            version=9,
-            materials=merged_materials,
-            nodes=[],
-            meshes=[composite_mesh],
-            collision_files=[]
-        )
+            gltf_mesh_idx = len(gltf.meshes)
+            gltf.meshes.append(Mesh(
+                name=f"Mesh_{node_name}",
+                primitives=obj_mesh_primitives
+            ))
 
-        # Export using GLTF exporter
-        ref_path = scene.base_model_path if scene.base_model_path else assets_root / f"MAP/{scene.stage_name}/{scene.stage_name}.YMO"
-        GltfExporter.export_glb(composite_model, ref_path, output_path, include_collision=include_collision)
-        print(f"Exported composite stage scene {scene.stage_name} to {output_path} ({len(final_pos)} vertices, {len(final_tris)} triangles)")
+            # Transform matrix (column-major order flat array for glTF)
+            matrix_4x4 = cls.euler_to_matrix(obj.position, obj.rotation_euler, obj.scale)
+            mat_col_major = matrix_4x4.T.flatten().tolist()
+
+            gltf_node_idx = len(gltf.nodes)
+            gltf.nodes.append(Node(
+                name=node_name,
+                mesh=gltf_mesh_idx,
+                matrix=mat_col_major,
+                extras={
+                    "object_index": obj.index,
+                    "asset_path": obj.ymo_path_str,
+                    "is_terrain": is_base
+                }
+            ))
+            stage_children_nodes.append(gltf_node_idx)
+
+        # Root stage container node
+        root_stage_node_idx = len(gltf.nodes)
+        gltf.nodes.append(Node(
+            name=f"Stage_{scene.stage_name}",
+            children=stage_children_nodes
+        ))
+        gltf.scenes[0].nodes = [root_stage_node_idx]
+
+        gltf.buffers[0].byteLength = len(binary_blob)
+        gltf.set_binary_blob(bytes(binary_blob))
+        gltf.save(output_path)
+        print(f"Exported modular stage scene {scene.stage_name} to {output_path} ({len(stage_children_nodes)} discrete nodes, {total_verts_count} vertices, {total_tris_count} triangles)")
         return output_path
 
 if __name__ == "__main__":

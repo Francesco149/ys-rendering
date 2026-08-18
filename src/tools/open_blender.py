@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Launches Blender on Windows host (or Linux WSL) to inspect extracted Ys models and stages.
-Automatically detects Windows Blender installation and translates WSL2 paths to Windows UNC paths.
+Automatically detects Windows Blender installation, ensures WSL interop is active,
+and translates WSL2 paths to Windows UNC paths.
 """
 
 import os
@@ -19,19 +20,34 @@ WINDOWS_BLENDER_CANDIDATES = [
     "/mnt/c/Program Files/Blender Foundation/Blender 4.0/blender.exe",
 ]
 
+def ensure_wsl_interop():
+    """Ensure WSL binfmt_misc interop is registered in the kernel."""
+    status_p = Path("/proc/sys/fs/binfmt_misc/WSLInterop")
+    if not status_p.exists():
+        reg_p = Path("/proc/sys/fs/binfmt_misc/register")
+        if reg_p.exists():
+            try:
+                subprocess.run(
+                    ["sudo", "tee", "/proc/sys/fs/binfmt_misc/register"],
+                    input=b":WSLInterop:M::MZ::/init:PF\n",
+                    capture_output=True,
+                    timeout=3
+                )
+            except Exception:
+                pass
+
 def find_windows_blender() -> Optional[Path]:
     for cand in WINDOWS_BLENDER_CANDIDATES:
         p = Path(cand)
         if p.exists():
             return p
-    
-    # Try dynamic search in Program Files
+
     base = Path("/mnt/c/Program Files/Blender Foundation")
     if base.exists():
         found = list(base.glob("**/blender.exe"))
         if found:
             return found[0]
-            
+
     return None
 
 def wsl_to_win_path(path: Path) -> str:
@@ -40,7 +56,6 @@ def wsl_to_win_path(path: Path) -> str:
         res = subprocess.run(["wslpath", "-w", str(path)], capture_output=True, text=True, check=True)
         return res.stdout.strip()
     except Exception:
-        # Fallback manual translation
         s = str(path)
         if s.startswith("/mnt/c/"):
             return "C:\\" + s[7:].replace("/", "\\")
@@ -56,6 +71,7 @@ def launch_blender(
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {model_path}")
 
+    ensure_wsl_interop()
     win_blender = find_windows_blender() if use_windows else None
 
     if use_windows and win_blender and win_blender.exists():
@@ -63,16 +79,24 @@ def launch_blender(
         print(f"Launching Windows Blender ({win_blender.name})...")
         print(f"Opening: {win_model_p}")
 
-        # Construct cmd args
-        args = [str(win_blender), win_model_p]
+        win_blender_str = str(win_blender)
+        args = [win_blender_str, win_model_p]
         if import_script and Path(import_script).exists():
             win_script_p = wsl_to_win_path(Path(import_script))
             args.extend(["--python", win_script_p])
 
-        # Launch detached so user can interact on Windows host
-        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        print("Windows Blender launched successfully.")
-        return
+        try:
+            # Direct binary invocation via WSLInterop
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("Windows Blender launched successfully.")
+            return
+        except OSError:
+            # Fallback invocation via cmd.exe start
+            win_blender_win = wsl_to_win_path(win_blender)
+            cmd_args = ["cmd.exe", "/c", "start", "", win_blender_win, win_model_p]
+            subprocess.Popen(cmd_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("Windows Blender launched successfully via cmd.exe.")
+            return
 
     # Linux WSL fallback
     print("Launching Linux Blender...")
