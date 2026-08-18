@@ -170,15 +170,32 @@ class GltfExporter:
             if gltf_tex_idx is not None:
                 pbr.baseColorTexture = TextureInfo(index=gltf_tex_idx)
 
+            # Check if texture has transparency
+            has_texture_alpha = False
+            if tex_p and tex_p.exists():
+                try:
+                    chk_im = Image.open(tex_p)
+                    if chk_im.mode in ("RGBA", "LA") or "transparency" in chk_im.info:
+                        chk_arr = np.array(chk_im.convert("RGBA"))
+                        if (chk_arr[:, :, 3] < 250).any():
+                            has_texture_alpha = True
+                except Exception:
+                    pass
+
             alpha_mode = "OPAQUE"
+            alpha_cutoff = None
             if ymo_mat.alpha < 0.99 or (ymo_mat.texture_name and ymo_mat.texture_name.upper().startswith("Z_")):
                 alpha_mode = "BLEND"
+            elif has_texture_alpha:
+                alpha_mode = "MASK"
+                alpha_cutoff = 0.5
 
             gltf_mat_idx = len(gltf.materials)
             gltf.materials.append(Material(
                 name=f"Mat_{ymo_mat.index}_{ymo_mat.texture_name or 'default'}",
                 pbrMetallicRoughness=pbr,
                 alphaMode=alpha_mode,
+                alphaCutoff=alpha_cutoff,
                 doubleSided=True
             ))
             mat_map[ymo_mat.index] = gltf_mat_idx

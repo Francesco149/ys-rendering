@@ -11,36 +11,32 @@ Enter the development shell with all dependencies (Python 3, Pillow, NumPy, PyGL
 nix develop
 ```
 
-### 1. Extract Game Assets from Steam Installation
+### 1. One-Command Turnkey Extraction & Conversion (All Maps)
+Extracts all assets from Steam, converts all 231 `.SOB` stage scenes and standalone `.YMO` models to textured `.glb` files with proper alpha masks:
 ```bash
-# Extract all map files from default Steam installation:
-python3 src/cli.py extract --filter "MAP\\"
-
-# Extract a specific stage or enemy folder:
-python3 src/cli.py extract --filter "MAP\\S_01" --output extracted
-python3 src/cli.py extract --filter "MAP\\MAPOBJ" --output extracted
+python3 src/cli.py extract-and-convert-all
+# or via wrapper:
+./scripts/extract_and_convert_all.sh
 ```
 
-### 2. Convert a Single 3D Model (`.YMO`)
+### 2. Open Directly in Windows Host Blender
+Automatically opens the converted `.glb` in your native Windows Blender installation (bypassing WSLg latency):
 ```bash
-# Convert to textured GLB with auto-discovered collision layers:
+python3 src/cli.py open-in-blender output/stages/S_00/S_0000/S_0000_composite.glb
+python3 src/cli.py open-in-blender output/stages/S_01/S_0100/S_0100_composite.glb
+```
+
+### 3. Convert Individual Models or Stages
+```bash
+# Convert a single model:
 python3 src/cli.py convert-model extracted/MAP/S_01/S_0100/S_0100.YMO --output output/S_0100.glb
 
-# Convert to Wavefront OBJ + MTL + PNG textures:
+# Convert to Wavefront OBJ:
 python3 src/cli.py convert-model extracted/MAP/S_01/S_0100/S_0100.YMO --format obj --output output/S_0100.obj
-```
 
-### 3. Convert a Full Composite Stage Scene (`.SOB`)
-Places base terrain, doors, torches, props, and animated objects with correct world transforms:
-```bash
+# Convert a single stage scene:
 python3 src/cli.py convert-stage extracted/MAP/S_01/S_0100/S_0100.SOB --output output/S_0100_composite.glb
 ```
-
-### 4. Open in Blender with Auto-Organized Collision Collections
-```bash
-blender --python src/tools/blender_import.py -- output/S_0100_composite.glb
-```
-
 ---
 
 ## 📂 Repository Architecture
