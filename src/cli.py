@@ -111,9 +111,8 @@ def cmd_open_blender(args):
 
 def cmd_extract_and_convert_all(args):
     from src.tools.extract_and_convert_all import run_full_pipeline
-    arch_p = Path(args.archive) if args.archive else None
     run_full_pipeline(
-        archive_path=arch_p,
+        target_game=getattr(args, "game", "all"),
         extracted_dir=Path(args.extracted),
         output_dir=Path(args.output),
         num_workers=args.workers
@@ -156,16 +155,13 @@ def main():
     p_open = subparsers.add_parser("open-in-blender", help="Open model or stage GLB in Windows Blender (or Linux)")
     p_open.add_argument("input", help="Path to .GLB file")
     p_open.add_argument("--linux", action="store_true", help="Force Linux Blender instead of Windows Blender")
-    p_open.set_defaults(func=cmd_open_blender)
-
     # Turnkey all-in-one extraction and conversion
-    p_all = subparsers.add_parser("extract-and-convert-all", aliases=["all"], help="Turnkey: extract all maps and convert all 231 stages to GLB")
-    p_all.add_argument("--archive", "-a", help="Path to data.ni")
+    p_all = subparsers.add_parser("extract-and-convert-all", aliases=["all"], help="Turnkey: extract and convert all maps across Ys games")
+    p_all.add_argument("--game", "-g", default="all", choices=["felghana", "origin", "ys6", "all"], help="Game to process (default: all)")
     p_all.add_argument("--extracted", "-e", default="extracted", help="Extracted directory")
     p_all.add_argument("--output", "-o", default="output", help="Output directory")
     p_all.add_argument("--workers", "-w", type=int, default=12, help="Parallel worker processes")
     p_all.set_defaults(func=cmd_extract_and_convert_all)
-
     args = parser.parse_args()
     args.func(args)
 

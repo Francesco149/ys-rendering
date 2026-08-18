@@ -11,14 +11,17 @@ Enter the development shell with all dependencies (Python 3, Pillow, NumPy, PyGL
 nix develop
 ```
 
-### 1. One-Command Turnkey Extraction & Conversion (All Maps)
-Extracts all assets from Steam, converts all 231 `.SOB` stage scenes and standalone `.YMO` models to textured `.glb` files with proper alpha masks:
+### 1. One-Command Turnkey Extraction & Conversion (All Installed Ys Games)
+Automatically discovers all installed Steam games (*Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*), extracts all map archives, and batch-converts all stage scenes and 3D models into textured `.glb` files with discrete nodes and alpha masks:
 ```bash
-python3 src/cli.py extract-and-convert-all
-# or via wrapper:
+# Process all installed Ys games:
 ./scripts/extract_and_convert_all.sh
-```
 
+# Or specify a single game:
+python3 src/cli.py extract-and-convert-all --game felghana --workers 12
+python3 src/cli.py extract-and-convert-all --game origin --workers 12
+python3 src/cli.py extract-and-convert-all --game ys6 --workers 12
+```
 ### 2. Open Directly in Windows Host Blender
 Automatically opens the converted `.glb` in your native Windows Blender installation (bypassing WSLg latency):
 ```bash

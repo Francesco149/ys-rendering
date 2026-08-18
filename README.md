@@ -43,20 +43,17 @@ Decoupled collision layers: **Emerald Green** for walkable stepping surfaces (`_
 
 ## 🚀 Quickstart
 
-### Prerequisites
-Uses Nix with flakes enabled (provides Python 3, Blender, NumPy, Pillow, PyGLTF):
+### 1. One-Command Turnkey Extraction & Conversion (All Installed Ys Games)
+Automatically discovers all installed Steam games (*Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*), extracts all map archives, and batch-converts all stage scenes and 3D models into textured `.glb` files with discrete nodes and alpha masks:
 ```bash
-nix develop
-```
-
-### 1. One-Command Turnkey Extraction & Conversion
-Extracts all map archives from the Steam installation and batch-converts every stage scene and 3D model in parallel:
-```bash
+# Process all installed Ys games:
 ./scripts/extract_and_convert_all.sh
-# or via CLI:
-python3 src/cli.py extract-and-convert-all --workers 12
-```
 
+# Or specify a single game:
+python3 src/cli.py extract-and-convert-all --game felghana --workers 12
+python3 src/cli.py extract-and-convert-all --game origin --workers 12
+python3 src/cli.py extract-and-convert-all --game ys6 --workers 12
+```
 ### 2. Inspect Directly in Windows Host Blender
 Automatically generates a native `.blend` project, imports the model, adds directional Sun lighting, sets the 3D viewport directly into **`RENDERED`** mode, and unlocks object modes for wireframe analysis:
 ```bash
