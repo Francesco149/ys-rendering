@@ -13,6 +13,23 @@ extern "C" {
 #include <lualib.h>
 }
 
+static thread_local std::unordered_map<std::string, std::unique_ptr<falcom::Archive>> s_thread_archives;
+
+static falcom::Archive* get_thread_archive(const std::string& arch_path) {
+    if (arch_path.empty()) return nullptr;
+    auto it = s_thread_archives.find(arch_path);
+    if (it != s_thread_archives.end()) {
+        return it->second.get();
+    }
+    auto arch = std::make_unique<falcom::Archive>();
+    if (arch->open(arch_path)) {
+        falcom::Archive* ptr = arch.get();
+        s_thread_archives[arch_path] = std::move(arch);
+        return ptr;
+    }
+    return nullptr;
+}
+
 namespace async_io {
 
 AsyncQueue& AsyncQueue::instance() {
@@ -92,6 +109,33 @@ uint64_t AsyncQueue::submit_decode_dds(const uint8_t* data, size_t size, bool au
     m_cv.notify_one();
     return task->id;
 }
+uint64_t AsyncQueue::submit_load_archive_texture(const std::string& arch_path, const std::vector<std::string>& candidate_paths, bool auto_lum_alpha, const std::string& tag) {
+    if (arch_path.empty() || candidate_paths.empty()) return 0;
+
+    auto task = std::make_shared<AsyncTask>();
+    task->id = m_next_id++;
+    task->tag = tag;
+    task->type = TaskType::LOAD_ARCHIVE_TEXTURE;
+    task->archive_path = arch_path;
+    task->candidate_paths = candidate_paths;
+    task->auto_lum_alpha = auto_lum_alpha;
+
+    {
+        std::lock_guard<std::mutex> lock(m_tasks_mutex);
+        m_active_tasks[task->id] = task;
+        if (!tag.empty()) {
+            m_tag_to_tasks[tag].push_back(task);
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_queue_mutex);
+        m_pending_queue.push_back(task);
+    }
+    m_cv.notify_one();
+    return task->id;
+}
+
 
 void AsyncQueue::cancel_task(uint64_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
@@ -144,14 +188,54 @@ void AsyncQueue::worker_thread_loop() {
 
         // Process Task
         if (task->type == TaskType::READ_ARCHIVE_FILE) {
-            falcom::Archive arch;
-            if (arch.open(task->archive_path)) {
+            falcom::Archive* arch = get_thread_archive(task->archive_path);
+            if (arch && arch->is_open()) {
                 if (!task->canceled) {
-                    task->result_bytes = arch.read_file(task->file_path);
+                    task->result_bytes = arch->read_file(task->file_path);
                     task->success = !task->result_bytes.empty();
                     if (!task->success) {
                         task->error_msg = "File not found in archive: " + task->file_path;
                     }
+                }
+            } else {
+                task->success = false;
+                task->error_msg = "Failed to open archive: " + task->archive_path;
+            }
+        } else if (task->type == TaskType::LOAD_ARCHIVE_TEXTURE) {
+            falcom::Archive* arch = get_thread_archive(task->archive_path);
+            if (arch && arch->is_open()) {
+                const falcom::ArchiveEntry* found_entry = nullptr;
+                for (const auto& cand : task->candidate_paths) {
+                    if (task->canceled) break;
+                    const falcom::ArchiveEntry* entry = arch->find_entry(cand);
+                    if (entry) {
+                        found_entry = entry;
+                        task->resolved_path = falcom::Archive::normalize_path(cand);
+                        break;
+                    }
+                }
+                if (found_entry && !task->canceled) {
+                    std::vector<uint8_t> bytes = arch->read_entry(*found_entry);
+                    if (!bytes.empty() && !task->canceled) {
+                        Image img = falcom::DdsLoader::load_image_from_memory(bytes.data(), bytes.size(), task->auto_lum_alpha);
+                        if (img.data && !task->canceled) {
+                            task->result_image = img;
+                            task->has_image = true;
+                            task->width = img.width;
+                            task->height = img.height;
+                            task->success = true;
+                        } else {
+                            if (img.data) UnloadImage(img);
+                            task->success = false;
+                            task->error_msg = "Failed to decode DDS image";
+                        }
+                    } else {
+                        task->success = false;
+                        task->error_msg = "Failed to read entry from archive";
+                    }
+                } else if (!task->success) {
+                    task->success = false;
+                    task->error_msg = "No matching candidate texture in archive";
                 }
             } else {
                 task->success = false;
@@ -235,6 +319,30 @@ static int l_async_decode_dds(lua_State* L) {
     lua_pushinteger(L, (lua_Integer)id);
     return 1;
 }
+static int l_async_load_archive_texture(lua_State* L) {
+    const char* arch_p = luaL_checkstring(L, 1);
+    if (!lua_istable(L, 2)) {
+        return luaL_error(L, "Expected table of candidate paths as argument 2");
+    }
+    bool auto_lum = lua_toboolean(L, 3) != 0;
+    const char* tag = luaL_optstring(L, 4, "");
+
+    std::vector<std::string> candidates;
+    int len = (int)lua_rawlen(L, 2);
+    candidates.reserve(len);
+    for (int i = 1; i <= len; i++) {
+        lua_rawgeti(L, 2, i);
+        if (lua_isstring(L, -1)) {
+            candidates.emplace_back(lua_tostring(L, -1));
+        }
+        lua_pop(L, 1);
+    }
+
+    uint64_t id = AsyncQueue::instance().submit_load_archive_texture(arch_p, candidates, auto_lum, tag);
+    lua_pushinteger(L, (lua_Integer)id);
+    return 1;
+}
+
 
 static int l_async_cancel(lua_State* L) {
     uint64_t id = (uint64_t)luaL_checkinteger(L, 1);
@@ -292,6 +400,28 @@ static int l_async_poll_completed(lua_State* L) {
                     lua_pushinteger(L, t->height); lua_setfield(L, -2, "height");
                 }
             }
+        } else if (t->type == TaskType::LOAD_ARCHIVE_TEXTURE) {
+            lua_pushstring(L, "load_texture"); lua_setfield(L, -2, "type");
+            if (!t->resolved_path.empty()) {
+                lua_pushstring(L, t->resolved_path.c_str()); lua_setfield(L, -2, "path");
+            }
+            if (t->success && t->has_image && t->result_image.data) {
+                if (IsWindowReady()) {
+                    Texture2D tex = LoadTextureFromImage(t->result_image);
+                    UnloadImage(t->result_image);
+                    t->result_image.data = nullptr;
+                    t->has_image = false;
+                    SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
+                    SetTextureWrap(tex, TEXTURE_WRAP_REPEAT);
+                    lua_pushinteger(L, tex.id); lua_setfield(L, -2, "tex_id");
+                    lua_pushinteger(L, tex.width); lua_setfield(L, -2, "width");
+                    lua_pushinteger(L, tex.height); lua_setfield(L, -2, "height");
+                } else {
+                    lua_pushinteger(L, 1); lua_setfield(L, -2, "tex_id");
+                    lua_pushinteger(L, t->width); lua_setfield(L, -2, "width");
+                    lua_pushinteger(L, t->height); lua_setfield(L, -2, "height");
+                }
+            }
         }
         if (!t->success && !t->error_msg.empty()) {
             lua_pushstring(L, t->error_msg.c_str());
@@ -316,6 +446,7 @@ void register_async_lua(lua_State* L) {
     lua_newtable(L);
     lua_pushcfunction(L, l_async_read_archive); lua_setfield(L, -2, "read_archive_file");
     lua_pushcfunction(L, l_async_decode_dds); lua_setfield(L, -2, "decode_dds");
+    lua_pushcfunction(L, l_async_load_archive_texture); lua_setfield(L, -2, "load_archive_texture");
     lua_pushcfunction(L, l_async_cancel); lua_setfield(L, -2, "cancel");
     lua_pushcfunction(L, l_async_cancel_tag); lua_setfield(L, -2, "cancel_tag");
     lua_pushcfunction(L, l_async_clear_pending); lua_setfield(L, -2, "clear_pending");

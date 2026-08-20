@@ -126,14 +126,17 @@ ys-rendering/
 ---
 ---
 
-## 📋 Future Roadmap & Known Follow-up Tasks
+## 📦 Mandatory Standalone Build Gate for All Sessions
 
-1. **Gallery Texture Paging Across Tabs & Page 2+**:
-   - Currently, gallery card textures are bound reliably for page 1 of the initial tab; switching to other game tabs or navigating to subsequent pages currently leaves some non-foliage submeshes in fallback texture state.
-   - Track texture cache lifecycles and bind queue when active tab/page index changes.
-2. **`S_0000` Base Terrain Texture Binding**:
-   - In `S_0000` (Port Rimorge), the tree foliage textures load cleanly while base terrain textures require multi-material binding pass adjustments.
+All future sessions MUST ALWAYS compile and package the standalone distributions before delivering work so the standalone applications can be immediately tested on Windows and Linux:
+```bash
+nix develop -c make -C editor win package-linux
+```
+This builds:
+- `build/ys-viewer-win64/` — Standalone Windows x64 package (`ys-viewer.exe`, Raylib 6.0 DLL, GLFW 3.4 DLL, mcfgthread DLL, Inter & IPA Gothic fonts, and all Lua scripts).
+- `build/ys-viewer-linux/` — Standalone Linux package (`ys-viewer`, fonts, tests, and Lua scripts).
 
+---
 
 ## 📝 Git Commit Conventions for Future Sessions
 

@@ -438,6 +438,145 @@ test("Ys Origin Stage Loading & Stride 48 Mesh Parser", function()
     stage_loader.unload_current_stage()
 end)
 
+-- 16. Viewer Wireframe, Vertex Lighting & 2-Line Collapsible Toolbar State
+test("Viewer Wireframe, Vertex Lighting & Collapsible Toolbar Toggles", function()
+    assert_true(viewer.toggles ~= nil, "viewer.toggles table exists")
+    assert_true(viewer.toggles.vertex_lighting == true, "vertex_lighting defaults to true")
+    assert_true(viewer.toggles.toolbar_collapsed == false, "toolbar_collapsed defaults to false")
+    assert_true(viewer.toggles.textures == true, "textures defaults to true")
+    assert_true(viewer.toggles.wireframe == false, "wireframe defaults to false")
+
+    -- Test toggling
+    viewer.toggles.vertex_lighting = false
+    assert_eq(viewer.toggles.vertex_lighting, false, "vertex_lighting can be toggled off")
+    viewer.toggles.vertex_lighting = true
+
+    viewer.toggles.toolbar_collapsed = true
+    assert_eq(viewer.toggles.toolbar_collapsed, true, "toolbar_collapsed can be toggled on")
+    viewer.toggles.toolbar_collapsed = false
+
+    -- Verify stage_loader accepts opts with vertex_lighting
+    if has_game_archives then
+        local test_stage = registry.stages[1]
+        local sc = stage_loader.load_stage(test_stage)
+        assert_true(sc ~= nil, "Loaded stage for render_scene test")
+        stage_loader.render_scene(sc, {
+            textures = true,
+            wireframe = true,
+            vertex_lighting = false,
+            colliders = false,
+            door_triggers = false,
+            props = true,
+        })
+        stage_loader.unload_current_stage()
+    end
+    print("    Viewer wireframe, vertex lighting, and toolbar toggles verified")
+end)
+
+-- 18. Gallery Thumbnail Dynamic Texture Streaming Across Tabs & Pages
+test("Gallery Thumbnail Dynamic Texture Streaming Across Tabs & Pages", function()
+    if not has_game_archives then print("    [SKIP] Game archives not present on runner"); return end
+    local picker = require("picker")
+    picker.init()
+
+    -- 1. All Games Tab - Page 1
+    registry.selected_game = "all"
+    registry.apply_filter()
+    picker.current_page = 1
+    assert_true(#registry.filtered > 0, "Discovered filtered maps for All Games")
+
+    local p1_stages = {}
+    for i = 1, math.min(6, #registry.filtered) do
+        table.insert(p1_stages, registry.filtered[i])
+    end
+
+    -- Exercise thumbnail generation and async texture streaming
+    for _ = 1, 5 do
+        picker.models_loaded_this_frame = 0
+        for _, st in ipairs(p1_stages) do
+            picker.ensure_thumbnail_rendered(st, 0.016)
+        end
+    end
+
+    -- Poll async completions until textures settle (with timeout budget)
+    for _ = 1, 100 do
+        picker.process_async_completions()
+    end
+    local p1_textured_count = 0
+    for _, st in ipairs(p1_stages) do
+        local th = registry.get_thumbnail(st)
+        if th and (th.has_textures or (th.bound_materials and next(th.bound_materials))) then
+            p1_textured_count = p1_textured_count + 1
+        end
+    end
+    assert_true(p1_textured_count > 0, "Page 1 thumbnails dynamically received textures")
+
+    -- 2. Switch Tab to Ys Origin
+    registry.selected_game = "origin"
+    registry.apply_filter()
+    picker.current_page = 1
+    if lp.async then lp.async.clear_pending() end
+
+    local origin_stages = {}
+    for i = 1, math.min(6, #registry.filtered) do
+        table.insert(origin_stages, registry.filtered[i])
+    end
+    for _ = 1, 5 do
+        picker.models_loaded_this_frame = 0
+        for _, st in ipairs(origin_stages) do
+            picker.ensure_thumbnail_rendered(st, 0.016)
+        end
+    end
+    for _ = 1, 100 do
+        picker.process_async_completions()
+    end
+    local origin_textured = 0
+    for _, st in ipairs(origin_stages) do
+        local th = registry.get_thumbnail(st)
+        if th and (th.has_textures or (th.bound_materials and next(th.bound_materials))) then
+            origin_textured = origin_textured + 1
+        end
+    end
+    assert_true(origin_textured > 0, "Ys Origin tab thumbnails dynamically received textures")
+
+    -- 3. Switch Tab to Ys VI and navigate to Page 2
+    registry.selected_game = "ys6"
+    registry.apply_filter()
+    picker.current_page = 2
+    if lp.async then lp.async.clear_pending() end
+
+    local ys6_p2_stages = {}
+    local start_i = (picker.current_page - 1) * picker.page_size + 1
+    for i = start_i, math.min(start_i + 5, #registry.filtered) do
+        table.insert(ys6_p2_stages, registry.filtered[i])
+    end
+
+    for _ = 1, 5 do
+        picker.models_loaded_this_frame = 0
+        for _, st in ipairs(ys6_p2_stages) do
+            picker.ensure_thumbnail_rendered(st, 0.016)
+        end
+    end
+    for _ = 1, 100 do
+        picker.process_async_completions()
+    end
+    local ys6_p2_textured = 0
+    for _, st in ipairs(ys6_p2_stages) do
+        local th = registry.get_thumbnail(st)
+        if th and (th.has_textures or (th.bound_materials and next(th.bound_materials))) then
+            ys6_p2_textured = ys6_p2_textured + 1
+        end
+    end
+    assert_true(ys6_p2_textured > 0, "Ys VI Page 2 thumbnails dynamically streamed textures")
+
+    -- Clean up filter
+    registry.selected_game = "all"
+    registry.apply_filter()
+    picker.current_page = 1
+    print(string.format("    Dynamic thumbnail texturing verified across All Games (%d), Origin (%d), and Ys VI P2 (%d)",
+        p1_textured_count, origin_textured, ys6_p2_textured))
+end)
+
 print("========================================================================")
 print(string.format("  Test Summary: %d Passed, %d Failed", pass_count, fail_count))
 print("========================================================================")

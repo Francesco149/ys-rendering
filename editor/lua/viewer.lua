@@ -23,12 +23,14 @@ local viewer = {
     toggles = {
         textures = true,
         wireframe = false,
+        vertex_lighting = true,
         colliders = false,     -- OFF by default as requested
         door_triggers = false, -- OFF by default as requested
         props = true,
         in_game_camera = false,
         show_inspector = true,
         show_grid = true,
+        toolbar_collapsed = false,
     },
     saved_free_cam = nil,
     return_to_picker = false,
@@ -142,10 +144,14 @@ function viewer.handle_input(dt)
         if lp.rl.is_key_pressed(lp.rl.key.T) then
             viewer.toggles.textures = not viewer.toggles.textures
         end
-
         -- 'W' -> Toggle Wireframe
         if lp.rl.is_key_pressed(lp.rl.key.W) and not lp.rl.is_mouse_button_down(1) then
             viewer.toggles.wireframe = not viewer.toggles.wireframe
+        end
+
+        -- 'L' -> Toggle Vertex Lighting
+        if lp.rl.is_key_pressed(lp.rl.key.L) then
+            viewer.toggles.vertex_lighting = not viewer.toggles.vertex_lighting
         end
 
         -- 'C' -> Toggle Colliders
@@ -275,18 +281,44 @@ end
 function viewer.render_floating_toolbar(screen_w)
     local padding = 6.0
     local btn_h = 28.0
-    local inspector_w = (viewer.toggles.show_inspector and (inspector.sidebar_w or 320)) or 0
-    local max_avail = screen_w - inspector_w - 24.0
-    local toolbar_w = math.max(300.0, math.min(830.0, max_avail))
-    local toolbar_h = btn_h + padding * 2.0
     local pill_x = 12.0
     local pill_y = 12.0
+
+    -- Collapsed state: compact pill with 'V' button to bring it back
+    if viewer.toggles.toolbar_collapsed then
+        local collapsed_w = 40.0
+        local collapsed_h = btn_h + padding * 2.0
+
+        ig.set_next_window_pos(pill_x, pill_y, ig.Cond_Always)
+        ig.set_next_window_size(collapsed_w, collapsed_h, ig.Cond_Always)
+        ig.set_next_window_bg_alpha(0.92)
+        local flags = (ig.wflag and (ig.wflag.NoDecoration | ig.wflag.NoMove | ig.wflag.NoSavedSettings)) or 0
+        ig.window("##viewer_floating_toolbar_collapsed", flags, function()
+            if ig.button("V##expand_toolbar", 28, btn_h) then
+                viewer.toggles.toolbar_collapsed = false
+            end
+            if ig.is_item_hovered() and ig.tooltip_ then
+                ig.tooltip_(function()
+                    ig.text("Expand Toolbar (V)")
+                end)
+            end
+        end)
+        return
+    end
+
+    -- Expanded state: 2-line floating pill toolbar
+    local inspector_w = (viewer.toggles.show_inspector and (inspector.sidebar_w or 320)) or 0
+    local max_avail = screen_w - inspector_w - 24.0
+    local toolbar_w = math.max(300.0, math.min(480.0, max_avail))
+    local row_spacing = 4.0
+    local toolbar_h = btn_h * 2.0 + row_spacing + padding * 2.0
 
     ig.set_next_window_pos(pill_x, pill_y, ig.Cond_Always)
     ig.set_next_window_size(toolbar_w, toolbar_h, ig.Cond_Always)
     ig.set_next_window_bg_alpha(0.92)
     local flags = (ig.wflag and (ig.wflag.NoDecoration | ig.wflag.NoMove | ig.wflag.NoSavedSettings)) or 0
     ig.window("##viewer_floating_toolbar", flags, function()
+        -- ── Line 1: Navigation & View Controls ──────────────────────────
         -- 1. Back to maps button
         if ig.button("< Maps (Esc)", 100, btn_h) then
             viewer.return_to_picker = true
@@ -296,55 +328,14 @@ function viewer.render_floating_toolbar(screen_w)
         ig.text_colored("|", 0.35, 0.35, 0.4, 1.0)
         ig.same_line(0, 8)
 
-        -- 2. Textures Toggle
-        local tex_on = viewer.toggles.textures
-        if tex_on then
-            ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
-            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        -- 2. Frame (F)
+        if ig.button("Frame (F)", 76, btn_h) then
+            viewer.focus_camera()
         end
-        if ig.button("Textures (T)", 96, btn_h) then
-            viewer.toggles.textures = not viewer.toggles.textures
-        end
-        if tex_on then ig.pop_style_color(2) end
 
         ig.same_line(0, 4)
 
-        local wire_on = viewer.toggles.wireframe
-        if wire_on then
-            ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
-            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
-        end
-        if ig.button("Wire (W)", 72, btn_h) then
-            viewer.toggles.wireframe = not viewer.toggles.wireframe
-        end
-        if wire_on then ig.pop_style_color(2) end
-
-        ig.same_line(0, 4)
-
-        local coll_on = viewer.toggles.colliders
-        if coll_on then
-            ig.push_style_color(ig.Col_Button, 0.1, 0.85, 0.4, 1.0)
-            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
-        end
-        if ig.button("Colliders (C)", 98, btn_h) then
-            viewer.toggles.colliders = not viewer.toggles.colliders
-        end
-        if coll_on then ig.pop_style_color(2) end
-
-        ig.same_line(0, 4)
-
-        local door_on = viewer.toggles.door_triggers
-        if door_on then
-            ig.push_style_color(ig.Col_Button, 0.96, 0.75, 0.1, 1.0)
-            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
-        end
-        if ig.button("Door Triggers (D)", 130, btn_h) then
-            viewer.toggles.door_triggers = not viewer.toggles.door_triggers
-        end
-        if door_on then ig.pop_style_color(2) end
-
-        ig.same_line(0, 4)
-
+        -- 3. In-Game Cam
         local cam_on = viewer.toggles.in_game_camera
         if cam_on then
             ig.push_style_color(ig.Col_Button, 0.2, 0.7, 0.95, 1.0)
@@ -360,12 +351,7 @@ function viewer.render_floating_toolbar(screen_w)
 
         ig.same_line(0, 4)
 
-        if ig.button("Frame (F)", 76, btn_h) then
-            viewer.focus_camera()
-        end
-
-        ig.same_line(0, 4)
-
+        -- 4. Inspector
         local insp_on = viewer.toggles.show_inspector
         if insp_on then
             ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
@@ -375,6 +361,84 @@ function viewer.render_floating_toolbar(screen_w)
             viewer.toggles.show_inspector = not viewer.toggles.show_inspector
         end
         if insp_on then ig.pop_style_color(2) end
+
+        ig.same_line(0, 8)
+        ig.text_colored("|", 0.35, 0.35, 0.4, 1.0)
+        ig.same_line(0, 8)
+
+        -- 5. Collapse Button (^)
+        if ig.button("^##collapse_toolbar", 28, btn_h) then
+            viewer.toggles.toolbar_collapsed = true
+        end
+        if ig.is_item_hovered() and ig.tooltip_ then
+            ig.tooltip_(function()
+                ig.text("Collapse Toolbar (^)")
+            end)
+        end
+
+        -- ── Line 2: Render & Shading Toggles ──────────────────────────
+        -- 1. Textures Toggle (T)
+        local tex_on = viewer.toggles.textures
+        if tex_on then
+            ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
+            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        end
+        if ig.button("Textures (T)", 96, btn_h) then
+            viewer.toggles.textures = not viewer.toggles.textures
+        end
+        if tex_on then ig.pop_style_color(2) end
+
+        ig.same_line(0, 4)
+
+        -- 2. Wireframe Toggle (W)
+        local wire_on = viewer.toggles.wireframe
+        if wire_on then
+            ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
+            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        end
+        if ig.button("Wire (W)", 72, btn_h) then
+            viewer.toggles.wireframe = not viewer.toggles.wireframe
+        end
+        if wire_on then ig.pop_style_color(2) end
+
+        ig.same_line(0, 4)
+
+        -- 3. Vertex Lighting Toggle (L)
+        local light_on = viewer.toggles.vertex_lighting
+        if light_on then
+            ig.push_style_color(ig.Col_Button, 0.96, 0.62, 0.04, 1.0)
+            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        end
+        if ig.button("Lighting (L)", 88, btn_h) then
+            viewer.toggles.vertex_lighting = not viewer.toggles.vertex_lighting
+        end
+        if light_on then ig.pop_style_color(2) end
+
+        ig.same_line(0, 4)
+
+        -- 4. Colliders Toggle (C)
+        local coll_on = viewer.toggles.colliders
+        if coll_on then
+            ig.push_style_color(ig.Col_Button, 0.1, 0.85, 0.4, 1.0)
+            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        end
+        if ig.button("Colliders (C)", 96, btn_h) then
+            viewer.toggles.colliders = not viewer.toggles.colliders
+        end
+        if coll_on then ig.pop_style_color(2) end
+
+        ig.same_line(0, 4)
+
+        -- 5. Door Triggers Toggle (D)
+        local door_on = viewer.toggles.door_triggers
+        if door_on then
+            ig.push_style_color(ig.Col_Button, 0.96, 0.75, 0.1, 1.0)
+            ig.push_style_color(ig.Col_Text, 0.1, 0.1, 0.12, 1.0)
+        end
+        if ig.button("Doors (D)", 80, btn_h) then
+            viewer.toggles.door_triggers = not viewer.toggles.door_triggers
+        end
+        if door_on then ig.pop_style_color(2) end
     end)
 end
 
@@ -384,12 +448,13 @@ function viewer.render_3d()
 
     if viewer.toggles.show_grid then
         local gy = sc.bounds.min.y - 0.2
-        local grid_alpha = viewer.toggles.wireframe and 40 or 255
+        local grid_alpha = 255
         lp.rl.draw_grid(30, math.max(2.0, sc.radius / 15.0), sc.center.x, gy, sc.center.z, grid_alpha)
     end
     stage_loader.render_scene(sc, {
         textures = viewer.toggles.textures,
         wireframe = viewer.toggles.wireframe,
+        vertex_lighting = viewer.toggles.vertex_lighting,
         colliders = viewer.toggles.colliders,
         door_triggers = viewer.toggles.door_triggers,
         props = viewer.toggles.props,

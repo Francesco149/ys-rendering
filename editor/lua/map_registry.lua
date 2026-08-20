@@ -244,10 +244,14 @@ function registry.get_thumbnail(stage)
         gl_id = lp.rl.get_render_texture_gl_id(rt_id),
         rot_y = 0.0,
         rendered = false,
+        rendered_frames = 0,
         model_handle = nil,
         coll_handle = nil,
         is_hovered = false,
         is_loading = false,
+        has_textures = false,
+        bound_materials = {},
+        requested_materials = {},
     }
     registry.thumbnails[key] = thumb
     table.insert(thumbnail_keys, key)

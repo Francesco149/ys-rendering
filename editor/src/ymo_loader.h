@@ -63,12 +63,11 @@ public:
     static std::shared_ptr<ParsedYmoModel> load_from_memory(const uint8_t* data, size_t size, const std::string& filename = "model.ymo");
     static std::shared_ptr<ParsedYmoModel> load_from_file(const std::string& path);
 
-    // Draws model with transform, tint, wireframe, and untextured options
-    static void draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe = false, bool untextured = false);
+    // Draws model with transform, tint, wireframe, untextured, and vertex_lighting options
+    static void draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe = false, bool untextured = false, bool vertex_lighting = true);
 
     // Draws single submesh
-    static void draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe = false, bool untextured = false);
-
+    static void draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe = false, bool untextured = false, bool vertex_lighting = true);
     // Binds a Texture2D to a material index
     static void bind_material_texture(ParsedYmoModel& model, int mat_idx, Texture2D texture);
 

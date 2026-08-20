@@ -698,6 +698,7 @@ void YmoLoader::bind_material_texture(ParsedYmoModel& model, int mat_idx, Textur
 static Shader s_ymo_shader = {};
 static int s_loc_alpha_test = -1;
 static int s_loc_additive = -1;
+static int s_loc_vertex_lighting = -1;
 static bool s_shader_initialized = false;
 
 static void ensure_ymo_shader() {
@@ -729,17 +730,19 @@ static void ensure_ymo_shader() {
         "uniform vec4 colDiffuse;\n"
         "uniform int uAlphaTest;\n"
         "uniform int uAdditive;\n"
+        "uniform int uVertexLighting;\n"
         "out vec4 finalColor;\n"
         "void main() {\n"
         "    vec4 texelColor = texture(texture0, fragTexCoord);\n"
+        "    vec4 vColor = (uVertexLighting == 1) ? fragColor : vec4(1.0, 1.0, 1.0, fragColor.a);\n"
         "    if (uAdditive == 1) {\n"
         "        // Additive light shaft (god rays / Z_ textures): vertex color multiplies texture\n"
-        "        finalColor = texelColor * colDiffuse * fragColor;\n"
+        "        finalColor = texelColor * colDiffuse * vColor;\n"
         "    } else {\n"
         "        if (uAlphaTest == 1 && texelColor.a < 0.25) {\n"
         "            discard;\n"
         "        }\n"
-        "        finalColor = texelColor * colDiffuse * fragColor;\n"
+        "        finalColor = texelColor * colDiffuse * vColor;\n"
         "    }\n"
         "}\n";
 
@@ -754,6 +757,7 @@ static void ensure_ymo_shader() {
     s_ymo_shader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(s_ymo_shader, "colDiffuse");
     s_loc_alpha_test = GetShaderLocation(s_ymo_shader, "uAlphaTest");
     s_loc_additive = GetShaderLocation(s_ymo_shader, "uAdditive");
+    s_loc_vertex_lighting = GetShaderLocation(s_ymo_shader, "uVertexLighting");
     s_shader_initialized = (s_ymo_shader.id > 0);
 }
 
@@ -779,8 +783,8 @@ static inline bool is_mat_transparent(const YmoMaterialInfo* mat_info) {
     return false;
 }
 
-void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe, bool untextured) {
-    if (!model.is_loaded) return;
+void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe, bool untextured, bool vertex_lighting) {
+    if (!model.is_loaded || !IsWindowReady()) return;
     static bool s_logged_first = false;
     if (!s_logged_first) {
         s_logged_first = true;
@@ -803,11 +807,7 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
         s_def_mat = LoadMaterialDefault();
     }
 
-    if (wireframe) {
-        rlEnableBackfaceCulling();
-    } else {
-        rlDisableBackfaceCulling();
-    }
+    rlDisableBackfaceCulling();
     rlEnableDepthTest();
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(transform));
@@ -819,11 +819,15 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
 
     int alpha_test_on = 1;
     int additive_off = 0;
+    int vert_light = vertex_lighting ? 1 : 0;
     if (s_shader_initialized && s_loc_alpha_test >= 0) {
         SetShaderValue(s_ymo_shader, s_loc_alpha_test, &alpha_test_on, SHADER_UNIFORM_INT);
     }
     if (s_shader_initialized && s_loc_additive >= 0) {
         SetShaderValue(s_ymo_shader, s_loc_additive, &additive_off, SHADER_UNIFORM_INT);
+    }
+    if (s_shader_initialized && s_loc_vertex_lighting >= 0) {
+        SetShaderValue(s_ymo_shader, s_loc_vertex_lighting, &vert_light, SHADER_UNIFORM_INT);
     }
 
     std::vector<int> transparent_pass_indices;
@@ -855,21 +859,13 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
             mat.shader = s_def_mat.shader;
         }
 
-        if (wireframe) {
+        if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
+            mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
+        } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
             mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-            mat.maps[MATERIAL_MAP_DIFFUSE].color = (tint.a < 250) ? tint : Color{ 0, 230, 255, 255 }; // Electric Azure
-            rlEnableWireMode();
-            DrawMesh(mesh, mat, MatrixIdentity());
-            rlDisableWireMode();
-        } else {
-            if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
-                mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
-            } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
-                mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-            }
-            mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
-            DrawMesh(mesh, mat, MatrixIdentity());
         }
+        mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
+        DrawMesh(mesh, mat, MatrixIdentity());
     }
 
     // PASS 2: Semi-Transparent and Additive geometry (Water, Glass, Light Shafts / God Rays)
@@ -891,17 +887,12 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
                 mat.shader = s_def_mat.shader;
             }
 
-            if (wireframe) {
+            if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
+                mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
+            } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
                 mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-                mat.maps[MATERIAL_MAP_DIFFUSE].color = (tint.a < 250) ? tint : Color{ 0, 230, 255, 255 };
-            } else {
-                if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
-                    mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
-                } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
-                    mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-                }
-                mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
             }
+            mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
 
             int alpha_test_off = 0;
             int add_val = additive ? 1 : 0;
@@ -911,6 +902,9 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
             if (s_shader_initialized && s_loc_additive >= 0) {
                 SetShaderValue(s_ymo_shader, s_loc_additive, &add_val, SHADER_UNIFORM_INT);
             }
+            if (s_shader_initialized && s_loc_vertex_lighting >= 0) {
+                SetShaderValue(s_ymo_shader, s_loc_vertex_lighting, &vert_light, SHADER_UNIFORM_INT);
+            }
 
             if (additive) {
                 rlSetBlendMode(BLEND_ADDITIVE);
@@ -918,13 +912,7 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
                 rlSetBlendMode(BLEND_ALPHA);
             }
 
-            if (wireframe) {
-                rlEnableWireMode();
-                DrawMesh(mesh, mat, MatrixIdentity());
-                rlDisableWireMode();
-            } else {
-                DrawMesh(mesh, mat, MatrixIdentity());
-            }
+            DrawMesh(mesh, mat, MatrixIdentity());
         }
 
         // Restore default state
@@ -932,12 +920,49 @@ void YmoLoader::draw_model(ParsedYmoModel& model, Vector3 pos, Vector3 rot_rad, 
         rlSetBlendMode(BLEND_ALPHA);
     }
 
+    // PASS 3: Wireframe Overlay (if enabled)
+    // Render wireframe edges on top of the solid geometry with backface culling to avoid seeing inside/through front faces.
+    if (wireframe) {
+        rlEnableBackfaceCulling();
+        rlEnableWireMode();
+        rlDisableDepthMask();
+
+        int alpha_test_off = 0;
+        int add_off = 0;
+        int vert_light_off = 0;
+        if (s_shader_initialized && s_loc_alpha_test >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_alpha_test, &alpha_test_off, SHADER_UNIFORM_INT);
+        }
+        if (s_shader_initialized && s_loc_additive >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_additive, &add_off, SHADER_UNIFORM_INT);
+        }
+        if (s_shader_initialized && s_loc_vertex_lighting >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_vertex_lighting, &vert_light_off, SHADER_UNIFORM_INT);
+        }
+
+        Material wire_mat = s_def_mat;
+        if (s_shader_initialized) {
+            wire_mat.shader = s_ymo_shader;
+        }
+        wire_mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
+        wire_mat.maps[MATERIAL_MAP_DIFFUSE].color = (tint.a < 250) ? tint : Color{ 0, 230, 255, 255 }; // Electric Azure
+
+        for (int i = 0; i < model.raylib_model.meshCount; i++) {
+            Mesh& mesh = model.raylib_model.meshes[i];
+            if (mesh.triangleCount == 0 || mesh.vertexCount == 0 || mesh.vaoId == 0) continue;
+            DrawMesh(mesh, wire_mat, MatrixIdentity());
+        }
+
+        rlDisableWireMode();
+        rlDisableBackfaceCulling();
+        rlEnableDepthMask();
+    }
+
     rlPopMatrix();
 }
 
-void YmoLoader::draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe, bool untextured) {
-    if (!model.is_loaded || submesh_idx < 0 || submesh_idx >= (int)model.submeshes.size()) return;
-
+void YmoLoader::draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos, Vector3 rot_rad, Vector3 scale, Color tint, bool wireframe, bool untextured, bool vertex_lighting) {
+    if (!model.is_loaded || !IsWindowReady() || submesh_idx < 0 || submesh_idx >= (int)model.submeshes.size()) return;
     int mesh_idx = model.submeshes[submesh_idx].raylib_mesh_index;
     if (mesh_idx < 0 || mesh_idx >= model.raylib_model.meshCount) return;
 
@@ -976,19 +1001,14 @@ void YmoLoader::draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos
         mat.shader = s_def_mat.shader;
     }
 
-    if (wireframe) {
-        rlEnableBackfaceCulling();
+    rlDisableBackfaceCulling();
+    if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
+        mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
+    } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
         mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-        mat.maps[MATERIAL_MAP_DIFFUSE].color = (tint.a < 250) ? tint : Color{ 0, 230, 255, 255 };
-    } else {
-        rlDisableBackfaceCulling();
-        if (mat_info && mat_info->has_custom_texture && mat_info->texture.id > 0 && !untextured) {
-            mat.maps[MATERIAL_MAP_DIFFUSE].texture = mat_info->texture;
-        } else if (mat.maps[MATERIAL_MAP_DIFFUSE].texture.id == 0 || untextured) {
-            mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
-        }
-        mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
     }
+    mat.maps[MATERIAL_MAP_DIFFUSE].color = tint;
+
     rlEnableDepthTest();
 
     if (additive) {
@@ -1004,22 +1024,52 @@ void YmoLoader::draw_submesh(ParsedYmoModel& model, int submesh_idx, Vector3 pos
 
     int alpha_test_val = (!additive && !transparent) ? 1 : 0;
     int add_val = additive ? 1 : 0;
+    int vert_light = vertex_lighting ? 1 : 0;
     if (s_shader_initialized && s_loc_alpha_test >= 0) {
         SetShaderValue(s_ymo_shader, s_loc_alpha_test, &alpha_test_val, SHADER_UNIFORM_INT);
     }
     if (s_shader_initialized && s_loc_additive >= 0) {
         SetShaderValue(s_ymo_shader, s_loc_additive, &add_val, SHADER_UNIFORM_INT);
     }
+    if (s_shader_initialized && s_loc_vertex_lighting >= 0) {
+        SetShaderValue(s_ymo_shader, s_loc_vertex_lighting, &vert_light, SHADER_UNIFORM_INT);
+    }
 
     rlPushMatrix();
     rlMultMatrixf(MatrixToFloat(transform));
 
+    DrawMesh(mesh, mat, MatrixIdentity());
+
     if (wireframe) {
+        rlEnableBackfaceCulling();
         rlEnableWireMode();
-        DrawMesh(mesh, mat, MatrixIdentity());
+        rlDisableDepthMask();
+
+        int alpha_test_off = 0;
+        int add_off = 0;
+        int vert_light_off = 0;
+        if (s_shader_initialized && s_loc_alpha_test >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_alpha_test, &alpha_test_off, SHADER_UNIFORM_INT);
+        }
+        if (s_shader_initialized && s_loc_additive >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_additive, &add_off, SHADER_UNIFORM_INT);
+        }
+        if (s_shader_initialized && s_loc_vertex_lighting >= 0) {
+            SetShaderValue(s_ymo_shader, s_loc_vertex_lighting, &vert_light_off, SHADER_UNIFORM_INT);
+        }
+
+        Material wire_mat = s_def_mat;
+        if (s_shader_initialized) {
+            wire_mat.shader = s_ymo_shader;
+        }
+        wire_mat.maps[MATERIAL_MAP_DIFFUSE].texture = s_def_mat.maps[MATERIAL_MAP_DIFFUSE].texture;
+        wire_mat.maps[MATERIAL_MAP_DIFFUSE].color = (tint.a < 250) ? tint : Color{ 0, 230, 255, 255 };
+
+        DrawMesh(mesh, wire_mat, MatrixIdentity());
+
         rlDisableWireMode();
-    } else {
-        DrawMesh(mesh, mat, MatrixIdentity());
+        rlDisableBackfaceCulling();
+        rlEnableDepthMask();
     }
 
     rlPopMatrix();
@@ -1173,8 +1223,12 @@ static int l_ymo_draw(lua_State* L) {
     }
     bool wireframe = lua_toboolean(L, 15) != 0;
     bool untextured = lua_toboolean(L, 16) != 0;
+    bool vertex_lighting = true;
+    if (lua_gettop(L) >= 17 && !lua_isnil(L, 17)) {
+        vertex_lighting = lua_toboolean(L, 17) != 0;
+    }
 
-    YmoLoader::draw_model(*model, pos, rot, scale, tint, wireframe, untextured);
+    YmoLoader::draw_model(*model, pos, rot, scale, tint, wireframe, untextured, vertex_lighting);
     return 0;
 }
 
@@ -1197,8 +1251,12 @@ static int l_ymo_draw_submesh(lua_State* L) {
     }
     bool wireframe = lua_toboolean(L, 16) != 0;
     bool untextured = lua_toboolean(L, 17) != 0;
+    bool vertex_lighting = true;
+    if (lua_gettop(L) >= 18 && !lua_isnil(L, 18)) {
+        vertex_lighting = lua_toboolean(L, 18) != 0;
+    }
 
-    YmoLoader::draw_submesh(*model, sm_idx, pos, rot, scale, tint, wireframe, untextured);
+    YmoLoader::draw_submesh(*model, sm_idx, pos, rot, scale, tint, wireframe, untextured, vertex_lighting);
     return 0;
 }
 

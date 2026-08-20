@@ -29,28 +29,38 @@ from src.converter.ymo_parser import YmoParser, YmoModel
 from src.converter.gltf_exporter import GltfExporter
 from src.converter.stage_builder import StageBuilder
 
+
 def get_current_rss_mb() -> float:
     try:
         return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
     except Exception:
         return 0.0
+
+
 KNOWN_GAMES = {
     "felghana": {
         "name": "Ys: The Oath in Felghana",
-        "steam_path": Path("/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys The Oath in Felghana/release/data.ni"),
+        "steam_path": Path(
+            "/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys The Oath in Felghana/release/data.ni"
+        ),
         "archive_filter": "MAP\\",
     },
     "origin": {
         "name": "Ys Origin",
-        "steam_path": Path("/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys Origin/release/data.ni"),
+        "steam_path": Path(
+            "/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys Origin/release/data.ni"
+        ),
         "archive_filter": "MAP\\",
     },
     "ys6": {
         "name": "Ys VI: The Ark of Napishtim",
-        "steam_path": Path("/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys VI/release/data.ni"),
+        "steam_path": Path(
+            "/mnt/c/Program Files (x86)/Steam/steamapps/common/Ys VI/release/data.ni"
+        ),
         "archive_filter": "MAP\\",
     },
 }
+
 
 def convert_single_stage(args_tuple) -> Dict[str, Any]:
     sob_path_str, extracted_dir_str, stages_out_str, skip_existing = args_tuple
@@ -71,15 +81,24 @@ def convert_single_stage(args_tuple) -> Dict[str, Any]:
             "vertices": 0,
             "triangles": 0,
             "path": str(out_glb),
-            "status": "CACHED"
+            "status": "CACHED",
         }
-
 
     try:
         scene = StageBuilder.parse_sob(sob_path, extracted_dir)
-        StageBuilder.export_composite_glb(scene, extracted_dir, out_glb, include_collision=False)
-        total_v = sum(len(o.model.meshes[0].positions) for o in scene.placed_objects if o.model and o.model.meshes)
-        total_t = sum(len(o.model.meshes[0].indices) for o in scene.placed_objects if o.model and o.model.meshes)
+        StageBuilder.export_composite_glb(
+            scene, extracted_dir, out_glb, include_collision=True
+        )
+        total_v = sum(
+            len(o.model.meshes[0].positions)
+            for o in scene.placed_objects
+            if o.model and o.model.meshes
+        )
+        total_t = sum(
+            len(o.model.meshes[0].indices)
+            for o in scene.placed_objects
+            if o.model and o.model.meshes
+        )
         del scene
         try:
             with open(out_glb, "rb") as f:
@@ -93,16 +112,17 @@ def convert_single_stage(args_tuple) -> Dict[str, Any]:
             "vertices": total_v,
             "triangles": total_t,
             "path": str(out_glb),
-            "status": "OK"
+            "status": "OK",
         }
     except Exception as ex:
         return {
             "stage": stage_name,
             "folder": str(rel_map.parent),
-            "status": f"Error: {ex}"
+            "status": f"Error: {ex}",
         }
     finally:
         gc.collect()
+
 
 def convert_single_model(args_tuple) -> bool:
     ymo_path_str, extracted_dir_str, models_out_str, skip_existing = args_tuple
@@ -117,10 +137,9 @@ def convert_single_model(args_tuple) -> bool:
     if skip_existing and out_glb.exists() and out_glb.stat().st_size > 100:
         return True
 
-
     try:
         model = YmoParser.parse_file(ymo_path)
-        GltfExporter.export_glb(model, ymo_path, out_glb, include_collision=False)
+        GltfExporter.export_glb(model, ymo_path, out_glb, include_collision=True)
         del model
         try:
             with open(out_glb, "rb") as f:
@@ -133,17 +152,18 @@ def convert_single_model(args_tuple) -> bool:
     finally:
         gc.collect()
 
+
 def process_game(
     game_key: str,
     game_info: Dict[str, Any],
     base_extracted_dir: Path,
     base_output_dir: Path,
     num_workers: int = 4,
-    skip_existing: bool = False
+    skip_existing: bool = False,
 ):
     game_name = game_info["name"]
     archive_path = game_info["steam_path"]
-    
+
     if not archive_path.exists():
         print(f"\n[!] Skipping {game_name}: Archive not found at {archive_path}")
         return
@@ -166,14 +186,19 @@ def process_game(
     map_dir = extracted_dir / "MAP"
     if not map_dir.exists() or not any(map_dir.iterdir()):
         ni = NiArchive(archive_path)
-        ni.extract_all(extracted_dir, filter_pattern=game_info.get("archive_filter", "MAP\\"))
+        ni.extract_all(
+            extracted_dir, filter_pattern=game_info.get("archive_filter", "MAP\\")
+        )
         print(f"      Extracted map assets to {extracted_dir}")
     else:
         print(f"      Map assets already present in {extracted_dir}")
 
     # 2. Stage Scenes (.SOB)
     print(f"\n[2/3] Converting composite stage scenes (.SOB)...")
-    sob_files = sorted(list(extracted_dir.glob("MAP/**/*.SOB")) + list(extracted_dir.glob("MAP/**/*.sob")))
+    sob_files = sorted(
+        list(extracted_dir.glob("MAP/**/*.SOB"))
+        + list(extracted_dir.glob("MAP/**/*.sob"))
+    )
     print(f"      Found {len(sob_files)} stage scenes.")
 
     stage_tasks = [
@@ -187,13 +212,20 @@ def process_game(
         if status in ("OK", "CACHED"):
             success_stages += 1
         if (i + 1) % 25 == 0 or i == len(stage_tasks) - 1:
-            print(f"      [{i+1}/{len(stage_tasks)}] Processed stage scenes ({success_stages} successful)...")
+            print(
+                f"      [{i + 1}/{len(stage_tasks)}] Processed stage scenes ({success_stages} successful)..."
+            )
 
-    print(f"      Successfully processed {success_stages}/{len(sob_files)} stage scenes.")
+    print(
+        f"      Successfully processed {success_stages}/{len(sob_files)} stage scenes."
+    )
 
     # 3. Standalone Models (.YMO)
     print(f"\n[3/3] Converting 3D model assets (.YMO)...")
-    ymo_files = sorted(list(extracted_dir.glob("MAP/**/*.YMO")) + list(extracted_dir.glob("MAP/**/*.ymo")))
+    ymo_files = sorted(
+        list(extracted_dir.glob("MAP/**/*.YMO"))
+        + list(extracted_dir.glob("MAP/**/*.ymo"))
+    )
     print(f"      Found {len(ymo_files)} model files.")
 
     model_tasks = [
@@ -205,15 +237,19 @@ def process_game(
         if convert_single_model(t):
             success_models += 1
         if (i + 1) % 50 == 0 or i == len(model_tasks) - 1:
-            print(f"      [{i+1}/{len(model_tasks)}] Processed models ({success_models} successful)...")
+            print(
+                f"      [{i + 1}/{len(model_tasks)}] Processed models ({success_models} successful)..."
+            )
 
     print(f"      Converted {success_models}/{len(ymo_files)} models to GLB.")
+
+
 def run_full_pipeline(
     target_game: str = "all",
     extracted_dir: Path = Path("extracted"),
     output_dir: Path = Path("output"),
     num_workers: int = 4,
-    skip_existing: bool = False
+    skip_existing: bool = False,
 ):
     start_time = time.time()
     extracted_dir = Path(extracted_dir)
@@ -229,14 +265,18 @@ def run_full_pipeline(
     elif target_game in KNOWN_GAMES:
         games_to_run = [target_game]
     else:
-        raise ValueError(f"Unknown game: '{target_game}'. Available: {list(KNOWN_GAMES.keys())} or 'all'")
+        raise ValueError(
+            f"Unknown game: '{target_game}'. Available: {list(KNOWN_GAMES.keys())} or 'all'"
+        )
 
     for g_key in games_to_run:
         process_game(
-            g_key, KNOWN_GAMES[g_key],
-            extracted_dir, output_dir,
+            g_key,
+            KNOWN_GAMES[g_key],
+            extracted_dir,
+            output_dir,
             num_workers=num_workers,
-            skip_existing=skip_existing
+            skip_existing=skip_existing,
         )
 
     elapsed = time.time() - start_time
@@ -245,14 +285,34 @@ def run_full_pipeline(
     print(f"  Output directory: {output_dir.resolve()}")
     print("========================================================================")
 
+
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Multi-Game Ys Map Extraction & 3D Conversion Pipeline")
-    parser.add_argument("--game", "-g", default="all", choices=["felghana", "origin", "ys6", "all"], help="Game to process")
-    parser.add_argument("--extracted", "-e", default="extracted", help="Extracted directory")
+
+    parser = argparse.ArgumentParser(
+        description="Multi-Game Ys Map Extraction & 3D Conversion Pipeline"
+    )
+    parser.add_argument(
+        "--game",
+        "-g",
+        default="all",
+        choices=["felghana", "origin", "ys6", "all"],
+        help="Game to process",
+    )
+    parser.add_argument(
+        "--extracted", "-e", default="extracted", help="Extracted directory"
+    )
     parser.add_argument("--output", "-o", default="output", help="Output directory")
-    parser.add_argument("--workers", "-w", type=int, default=4, help="Number of worker processes (default: 4)")
-    parser.add_argument("--skip-existing", action="store_true", help="Skip already exported GLBs")
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=4,
+        help="Number of worker processes (default: 4)",
+    )
+    parser.add_argument(
+        "--skip-existing", action="store_true", help="Skip already exported GLBs"
+    )
     args = parser.parse_args()
 
     run_full_pipeline(
@@ -260,5 +320,5 @@ if __name__ == "__main__":
         extracted_dir=Path(args.extracted),
         output_dir=Path(args.output),
         num_workers=args.workers,
-        skip_existing=args.skip_existing
+        skip_existing=args.skip_existing,
     )

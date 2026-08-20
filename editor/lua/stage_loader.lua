@@ -330,6 +330,7 @@ function stage_loader.render_scene(scene, opts)
     opts = opts or {}
     local show_textures = (opts.textures ~= false)
     local show_wireframe = (opts.wireframe == true)
+    local show_vert_lighting = (opts.vertex_lighting ~= false)
     local show_props = (opts.props ~= false)
     local show_colliders = (opts.colliders == true)
     local show_doors = (opts.door_triggers == true)
@@ -343,13 +344,13 @@ function stage_loader.render_scene(scene, opts)
         end
     end
     if scene.base_model_handle and not base_drawn_in_props then
-        ys.ymo.draw(scene.base_model_handle, 0, 0, 0, 0, 0, 0, 1, 1, 1, 255, 255, 255, 255, show_wireframe, not show_textures)
+        ys.ymo.draw(scene.base_model_handle, 0, 0, 0, 0, 0, 0, 1, 1, 1, 255, 255, 255, 255, show_wireframe, not show_textures, show_vert_lighting)
     end
     if show_props then
         for _, prop in ipairs(scene.placed_props) do
             if prop.visible and prop.model_handle then
                 local p, r, s = prop.position, prop.rotation, prop.scale
-                ys.ymo.draw(prop.model_handle, p.x, p.y, p.z, r.x, r.y, r.z, s.x, s.y, s.z, 255, 255, 255, 255, show_wireframe, not show_textures)
+                ys.ymo.draw(prop.model_handle, p.x, p.y, p.z, r.x, r.y, r.z, s.x, s.y, s.z, 255, 255, 255, 255, show_wireframe, not show_textures, show_vert_lighting)
             end
         end
     end

@@ -11,6 +11,7 @@ local picker = {
     card_height = 230,
     thumb_height = 140,
     temp_paths = {}, -- for settings modal
+    texture_cache = {}, -- normalized_path -> tex_id
     current_page = 1,
     page_size = 24,
 }
@@ -31,27 +32,68 @@ function picker.open_settings()
         picker.temp_paths[gid] = gconf.archive_path or ""
     end
 end
+function picker.clear_texture_cache()
+    if picker.texture_cache then
+        for _, tex_id in pairs(picker.texture_cache) do
+            if tex_id and tex_id > 1 then
+                ys.dds.unload_texture(tex_id)
+            end
+        end
+    end
+    picker.texture_cache = {}
+end
+
+local function reset_unbound_texture_requests()
+    if lp.async then lp.async.clear_pending() end
+    for _, th in pairs(registry.thumbnails) do
+        if th.requested_materials then
+            for mat_idx, _ in pairs(th.requested_materials) do
+                if not (th.bound_materials and th.bound_materials[mat_idx]) then
+                    th.requested_materials[mat_idx] = nil
+                end
+            end
+        end
+    end
+end
+
 
 -- Process completed background tasks (non-blocking, called each frame)
 function picker.process_async_completions()
     if not lp.async then return end
-    local completed = lp.async.poll_completed(24)
+    local completed = lp.async.poll_completed(32)
     if not completed or #completed == 0 then return end
 
     for _, task in ipairs(completed) do
-        if task.type == "read_archive" and task.success and task.data then
-            -- Submit CPU DDS decode task with same tag
-            lp.async.decode_dds(task.data, false, task.tag)
-        elseif task.type == "decode_dds" and task.success and task.tex_id then
-            -- Tag format: "game_id:stage_id:mat_idx"
+        if task.type == "load_texture" and task.success and task.tex_id then
+            if task.path and task.path ~= "" then
+                picker.texture_cache[task.path] = task.tex_id
+            end
             local stage_key, mat_idx_str = task.tag:match("^(.-):(%d+)$")
             if stage_key and mat_idx_str then
                 local thumb = registry.thumbnails[stage_key]
                 if thumb and thumb.model_handle then
                     local mat_idx = tonumber(mat_idx_str)
                     ys.ymo.bind_texture(thumb.model_handle, mat_idx, task.tex_id)
+                    thumb.bound_materials = thumb.bound_materials or {}
+                    thumb.bound_materials[mat_idx] = true
                     thumb.has_textures = true
                     thumb.rendered = false -- trigger re-render with texture
+                end
+            end
+        elseif task.type == "read_archive" and task.success and task.data then
+            -- Submit CPU DDS decode task with same tag
+            lp.async.decode_dds(task.data, false, task.tag)
+        elseif task.type == "decode_dds" and task.success and task.tex_id then
+            local stage_key, mat_idx_str = task.tag:match("^(.-):(%d+)$")
+            if stage_key and mat_idx_str then
+                local thumb = registry.thumbnails[stage_key]
+                if thumb and thumb.model_handle then
+                    local mat_idx = tonumber(mat_idx_str)
+                    ys.ymo.bind_texture(thumb.model_handle, mat_idx, task.tex_id)
+                    thumb.bound_materials = thumb.bound_materials or {}
+                    thumb.bound_materials[mat_idx] = true
+                    thumb.has_textures = true
+                    thumb.rendered = false
                 end
             end
         end
@@ -59,12 +101,12 @@ function picker.process_async_completions()
 end
 
 -- Renders thumbnail into render texture if needed (budgeted per frame)
-local function ensure_thumbnail_rendered(stage, dt)
+function picker.ensure_thumbnail_rendered(stage, dt)
     local thumb = registry.get_thumbnail(stage)
 
     -- 1. If not loaded yet, load minimal YMO or YCO for preview (respect per-frame budget)
     if not thumb.model_handle and not thumb.coll_handle and not thumb.is_loading then
-        if (picker.models_loaded_this_frame or 0) >= 2 then
+        if (picker.models_loaded_this_frame or 0) >= 3 then
             -- Defer to next frame to keep smooth 60fps
             return
         end
@@ -79,6 +121,7 @@ local function ensure_thumbnail_rendered(stage, dt)
                     if m_h then
                         thumb.model_handle = m_h
                         thumb.info = info
+                        thumb.model_path = stage.ymo_path
                         stage.total_triangles = info.total_triangles
                         stage.total_vertices = info.total_vertices
                     end
@@ -101,6 +144,7 @@ local function ensure_thumbnail_rendered(stage, dt)
                                         if thumb.model_handle then ys.ymo.unload(thumb.model_handle) end
                                         thumb.model_handle = pm_h
                                         thumb.info = p_info
+                                        thumb.model_path = norm_p
                                         stage.total_triangles = p_info.total_triangles
                                         stage.total_vertices = p_info.total_vertices
                                         break
@@ -125,50 +169,94 @@ local function ensure_thumbnail_rendered(stage, dt)
         end
         thumb.rendered = false
     end
+
     -- 2. Asynchronously stream textures in background (if enabled in settings)
     local allow_textures = (config.settings.thumbnail_textures ~= false)
-    if thumb.model_handle and thumb.info and allow_textures and not thumb.textures_requested and lp.async then
-        thumb.textures_requested = true
+    if thumb.model_handle and thumb.info and allow_textures then
         local gconf = config.settings.games[stage.game_id]
         if gconf and gconf.archive_path ~= "" then
             local q = config.settings.texture_quality or "H"
-            local stage_dir = stage.ymo_path:match("^(.-)/[^/]+$") or "map"
-            local stage_parent = stage.ymo_path:match("^(.-)/[^/]+/[^/]+$") or "map"
+            local active_model_path = thumb.model_path or stage.ymo_path or ("map/" .. stage.stage_id .. "/" .. stage.stage_id .. ".ymo")
+            local stage_dir = active_model_path:match("^(.-)/[^/]+$") or "map"
+            local stage_parent = stage_dir:match("^(.-)/[^/]+$") or "map"
+
+            thumb.bound_materials = thumb.bound_materials or {}
+            thumb.requested_materials = thumb.requested_materials or {}
 
             for _, mat in ipairs(thumb.info.materials or {}) do
-                if mat.texture_name and mat.texture_name ~= "" then
-                    local tex_name = mat.texture_name:lower()
-                    local tex_base = tex_name:match("^([^%.]+)") or tex_name
-                    local tag = stage.key .. ":" .. tostring(mat.index)
-
-                    local names_to_try = { tex_name, tex_base .. ".dds" }
-                    if not tex_name:find("^_c_") then
-                        table.insert(names_to_try, "_c_" .. tex_name)
-                        table.insert(names_to_try, "_c_" .. tex_base .. ".dds")
+                local mat_idx = mat.index
+                if not thumb.bound_materials[mat_idx] then
+                    if not mat.texture_name or mat.texture_name == "" then
+                        thumb.bound_materials[mat_idx] = true
                     else
-                        local stripped = tex_name:gsub("^_c_", "")
-                        table.insert(names_to_try, stripped)
-                    end
+                        local tex_name = mat.texture_name:lower()
+                        local tex_base = tex_name:match("^([^%.]+)") or tex_name
 
-                    local search_dirs = {
-                        stage_dir,
-                        stage_dir .. "/l",
-                        stage_parent .. "/common/" .. q:lower(),
-                        stage_parent .. "/common/h",
-                        stage_parent .. "/common/l",
-                        stage_parent .. "/common",
-                        "map/common/" .. q:lower(),
-                        "map/common/h",
-                        "map/common/l",
-                        "map/common",
-                        "common/" .. q:lower(),
-                        "common/h",
-                        "common/l",
-                        "common",
-                    }
-                    for _, sdir in ipairs(search_dirs) do
-                        for _, ntry in ipairs(names_to_try) do
-                            lp.async.read_archive_file(gconf.archive_path, sdir .. "/" .. ntry, tag)
+                        local names_to_try = { tex_name, tex_base .. ".dds" }
+                        if not tex_name:find("^_c_") then
+                            table.insert(names_to_try, "_c_" .. tex_name)
+                            table.insert(names_to_try, "_c_" .. tex_base .. ".dds")
+                        else
+                            local stripped = (tex_name:gsub("^_c_", ""))
+                            table.insert(names_to_try, stripped)
+                            local stripped_base = stripped:match("^([^%.]+)") or stripped
+                            table.insert(names_to_try, stripped_base .. ".dds")
+                        end
+
+                        local search_dirs = {
+                            stage_dir,
+                            stage_dir .. "/" .. q:lower(),
+                            stage_dir .. "/h",
+                            stage_dir .. "/l",
+                            stage_parent .. "/common/" .. q:lower(),
+                            stage_parent .. "/common/h",
+                            stage_parent .. "/common/l",
+                            stage_parent .. "/common",
+                            stage_parent,
+                            "map/common/" .. q:lower(),
+                            "map/common/h",
+                            "map/common/l",
+                            "map/common",
+                            "map/mapobj/common/" .. q:lower(),
+                            "map/mapobj/common/h",
+                            "map/mapobj/common/l",
+                            "map/mapobj/common",
+                            "common/" .. q:lower(),
+                            "common/h",
+                            "common/l",
+                            "common",
+                        }
+
+                        local candidates = {}
+                        if mat.texture_path and mat.texture_path ~= "" then
+                            local norm_tpath = (mat.texture_path:lower():gsub("\\", "/"))
+                            table.insert(candidates, norm_tpath)
+                        end
+                        for _, sdir in ipairs(search_dirs) do
+                            for _, ntry in ipairs(names_to_try) do
+                                table.insert(candidates, sdir .. "/" .. ntry)
+                            end
+                        end
+
+                        -- Check if any candidate is already in texture cache
+                        local cached_tex_id = nil
+                        for _, cand in ipairs(candidates) do
+                            if picker.texture_cache[cand] then
+                                cached_tex_id = picker.texture_cache[cand]
+                                break
+                            end
+                        end
+
+                        if cached_tex_id then
+                            ys.ymo.bind_texture(thumb.model_handle, mat_idx, cached_tex_id)
+                            thumb.bound_materials[mat_idx] = true
+                            thumb.has_textures = true
+                            thumb.rendered = false
+                        elseif not thumb.requested_materials[mat_idx] and lp.async then
+                            thumb.requested_materials[mat_idx] = true
+                            local auto_lum = (tex_name:sub(1, 2) == "z_") or (mat.alpha < 0.95 and mat.alpha > 0.0)
+                            local tag = stage.key .. ":" .. tostring(mat_idx)
+                            lp.async.load_archive_texture(gconf.archive_path, candidates, auto_lum, tag)
                         end
                     end
                 end
@@ -187,6 +275,7 @@ local function ensure_thumbnail_rendered(stage, dt)
         thumb.rendered_frames = thumb.rendered_frames + 1
     end
 end
+local ensure_thumbnail_rendered = picker.ensure_thumbnail_rendered
 
 function picker.render_header(avail_w)
     ig.child("##header_bar", 0, 68, function()
@@ -206,9 +295,7 @@ function picker.render_header(avail_w)
         local tex_label = tex_enabled and "Textures: ON" or "Textures: OFF"
         if ig.button(tex_label .. "##thumb_tex_toggle", tex_btn_w, 24) then
             config.settings.thumbnail_textures = not tex_enabled
-            if not config.settings.thumbnail_textures and lp.async then
-                lp.async.clear_pending()
-            end
+            reset_unbound_texture_requests()
             for _, th in pairs(registry.thumbnails) do
                 th.rendered = false
             end
@@ -250,10 +337,7 @@ function picker.render_header(avail_w)
                 registry.selected_game = tab.id
                 registry.apply_filter()
                 picker.current_page = 1
-                if lp.async then lp.async.clear_pending() end
-                for _, th in pairs(registry.thumbnails) do
-                    if not th.has_textures then th.textures_requested = false end
-                end
+                reset_unbound_texture_requests()
             end
 
             if is_sel then
@@ -271,10 +355,7 @@ function picker.render_header(avail_w)
             registry.search_query = new_query
             registry.apply_filter()
             picker.current_page = 1
-            if lp.async then lp.async.clear_pending() end
-            for _, th in pairs(registry.thumbnails) do
-                if not th.has_textures then th.textures_requested = false end
-            end
+            reset_unbound_texture_requests()
         end
         ig.pop_item_width()
 
@@ -284,10 +365,7 @@ function picker.render_header(avail_w)
                 registry.search_query = ""
                 registry.apply_filter()
                 picker.current_page = 1
-                if lp.async then lp.async.clear_pending() end
-                for _, th in pairs(registry.thumbnails) do
-                    if not th.has_textures then th.textures_requested = false end
-                end
+                reset_unbound_texture_requests()
             end
         end
     end)
@@ -399,10 +477,7 @@ function picker.render_grid(avail_w, avail_h, dt)
         -- Pagination Bar
         if total_pages > 1 then
             local function on_page_changed()
-                if lp.async then lp.async.clear_pending() end
-                for _, th in pairs(registry.thumbnails) do
-                    if not th.has_textures then th.textures_requested = false end
-                end
+                reset_unbound_texture_requests()
             end
 
             if ig.button("<< First", 70, 24) and picker.current_page > 1 then
@@ -531,6 +606,7 @@ function picker.render_settings_modal()
             config.save_settings()
             config.close_all_archives()
             stage_loader.clear_texture_cache()
+            picker.clear_texture_cache()
             registry.cleanup_thumbnails()
             registry.rescan_all()
             picker.show_settings = false
@@ -558,7 +634,7 @@ function picker.frame(dt)
             registry.search_query = ""
             registry.apply_filter()
             picker.current_page = 1
-            if lp.async then lp.async.clear_pending() end
+            reset_unbound_texture_requests()
         end
 
         -- 2. Backspace: remove last character
@@ -567,7 +643,7 @@ function picker.frame(dt)
                 registry.search_query = registry.search_query:sub(1, -2)
                 registry.apply_filter()
                 picker.current_page = 1
-                if lp.async then lp.async.clear_pending() end
+                reset_unbound_texture_requests()
             end
         end
 
@@ -585,7 +661,7 @@ function picker.frame(dt)
             if text_changed then
                 registry.apply_filter()
                 picker.current_page = 1
-                if lp.async then lp.async.clear_pending() end
+                reset_unbound_texture_requests()
             end
         end
     elseif picker.show_settings and not io.want_capture_keyboard then
