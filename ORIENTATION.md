@@ -11,7 +11,20 @@ Enter the development shell with all dependencies (Python 3, Pillow, NumPy, PyGL
 nix develop
 ```
 
-### 1. One-Command Turnkey Extraction & Conversion (All Installed Ys Games)
+### 1. Launch Native 3D Map & Mesh Viewer (Raylib + ImGui + Lua)
+Explore all maps, models, and stages directly from raw game archives with on-the-fly texture decoding, 3D turntable thumbnails, collision layer toggles, and Godot-standard navigation:
+```bash
+# Build and run native desktop viewer:
+make -C editor run
+
+# Or run headless test suite & Oracle verification:
+make -C editor test
+
+# Cross-compile standalone Windows x64 package:
+make -C editor win
+```
+
+### 2. One-Command Turnkey Extraction & Conversion (All Installed Ys Games)
 Automatically discovers all installed Steam games (*Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*), extracts all map archives, and batch-converts all stage scenes and 3D models into textured `.glb` files with discrete nodes and alpha masks:
 ```bash
 # Process all installed Ys games:
@@ -22,14 +35,15 @@ python3 src/cli.py extract-and-convert-all --game felghana --workers 12
 python3 src/cli.py extract-and-convert-all --game origin --workers 12
 python3 src/cli.py extract-and-convert-all --game ys6 --workers 12
 ```
-### 2. Open Directly in Windows Host Blender
+
+### 3. Open Directly in Windows Host Blender
 Automatically opens the converted `.glb` in your native Windows Blender installation (bypassing WSLg latency):
 ```bash
 python3 src/cli.py open-in-blender output/stages/S_00/S_0000/S_0000_composite.glb
 python3 src/cli.py open-in-blender output/stages/S_01/S_0100/S_0100_composite.glb
 ```
 
-### 3. Convert Individual Models or Stages
+### 4. Convert Individual Models or Stages
 ```bash
 # Convert a single model:
 python3 src/cli.py convert-model extracted/MAP/S_01/S_0100/S_0100.YMO --output output/S_0100.glb
@@ -40,8 +54,6 @@ python3 src/cli.py convert-model extracted/MAP/S_01/S_0100/S_0100.YMO --format o
 # Convert a single stage scene:
 python3 src/cli.py convert-stage extracted/MAP/S_01/S_0100/S_0100.SOB --output output/S_0100_composite.glb
 ```
----
-
 ## 📂 Repository Architecture
 
 ```
@@ -112,6 +124,16 @@ ys-rendering/
   appendix.
 
 ---
+---
+
+## 📋 Future Roadmap & Known Follow-up Tasks
+
+1. **Gallery Texture Paging Across Tabs & Page 2+**:
+   - Currently, gallery card textures are bound reliably for page 1 of the initial tab; switching to other game tabs or navigating to subsequent pages currently leaves some non-foliage submeshes in fallback texture state.
+   - Track texture cache lifecycles and bind queue when active tab/page index changes.
+2. **`S_0000` Base Terrain Texture Binding**:
+   - In `S_0000` (Port Rimorge), the tree foliage textures load cleanly while base terrain textures require multi-material binding pass adjustments.
+
 
 ## 📝 Git Commit Conventions for Future Sessions
 

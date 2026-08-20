@@ -285,11 +285,12 @@ class StageBuilder:
             has_texture_alpha = False
             if tex_p and tex_p.exists():
                 try:
-                    chk_im = Image.open(tex_p)
-                    if chk_im and (chk_im.mode in ("RGBA", "LA") or "transparency" in chk_im.info):
-                        chk_arr = np.array(chk_im.convert("RGBA"))
-                        if (chk_arr[:, :, 3] < 250).any():
-                            has_texture_alpha = True
+                    with Image.open(tex_p) as chk_im:
+                        if chk_im.mode in ("RGBA", "LA") or "transparency" in chk_im.info:
+                            chk_arr = np.array(chk_im.convert("RGBA"))
+                            if (chk_arr[:, :, 3] < 250).any():
+                                has_texture_alpha = True
+                            del chk_arr
                 except Exception:
                     pass
 

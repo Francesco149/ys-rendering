@@ -48,29 +48,38 @@ class GltfExporter:
         while root_dir.parent != root_dir and root_dir.name.upper() not in ("MAP", "EXTRACTED"):
             root_dir = root_dir.parent
 
-        candidates = []
-        if prefer_high_res:
-            candidates.extend([
-                stage_dir / "H",
-                stage_dir,
-                stage_parent / "COMMON" / "H",
-                stage_parent / "COMMON" / "L",
-                stage_parent / "COMMON",
-                stage_dir / "L",
-                root_dir / "MAP" / stage_parent.name / "COMMON" / "H",
-                root_dir / "MAP" / stage_parent.name / "COMMON" / "L",
-            ])
+        candidates = [
+            stage_dir,
+            stage_dir / "H",
+            stage_dir / "h",
+            stage_dir / "L",
+            stage_dir / "l",
+            stage_parent / "COMMON" / "H",
+            stage_parent / "common" / "h",
+            stage_parent / "COMMON" / "L",
+            stage_parent / "common" / "l",
+            stage_parent / "COMMON",
+            stage_parent / "common",
+            root_dir / "MAP" / stage_parent.name / "COMMON" / "H",
+            root_dir / "map" / stage_parent.name / "common" / "h",
+            root_dir / "MAP" / "COMMON" / "H",
+            root_dir / "map" / "common" / "h",
+            root_dir / "MAP" / "COMMON",
+            root_dir / "map" / "common",
+            root_dir / "COMMON" / "H",
+            root_dir / "common" / "h",
+            root_dir / "COMMON",
+            root_dir / "common",
+        ]
+        names_to_try = [filename, filename.upper(), filename.lower(), filename.capitalize()]
+        if not filename.lower().startswith("_c_"):
+            names_to_try.extend(["_c_" + filename, "_C_" + filename, "_C_" + filename.upper(), "_c_" + filename.lower()])
         else:
-            candidates.extend([
-                stage_dir / "L",
-                stage_dir,
-                stage_parent / "COMMON" / "L",
-                stage_parent / "COMMON" / "H",
-                stage_parent / "COMMON",
-            ])
+            stripped = filename[4:]
+            names_to_try.extend([stripped, stripped.upper(), stripped.lower()])
 
         for c in candidates:
-            for fname in [filename, filename.upper(), filename.lower(), filename.capitalize()]:
+            for fname in names_to_try:
                 p = c / fname
                 if p.exists():
                     return p
@@ -78,19 +87,20 @@ class GltfExporter:
 
     @staticmethod
     def dds_to_png_bytes(dds_path: Path, is_additive: bool = False) -> bytes:
-        im = Image.open(dds_path)
-        if is_additive:
-            im_rgba = im.convert("RGBA")
-            arr = np.array(im_rgba)
-            luminance = np.max(arr[:, :, :3], axis=2)
-            arr[:, :, 3] = luminance
-            im = Image.fromarray(arr)
-        elif im.mode not in ("RGB", "RGBA"):
-            im = im.convert("RGBA")
-        buf = io.BytesIO()
-        im.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
-
+        with Image.open(dds_path) as im:
+            if is_additive:
+                im_rgba = im.convert("RGBA")
+                arr = np.array(im_rgba)
+                luminance = np.max(arr[:, :, :3], axis=2)
+                arr[:, :, 3] = luminance
+                im_final = Image.fromarray(arr)
+            elif im.mode not in ("RGB", "RGBA"):
+                im_final = im.convert("RGBA")
+            else:
+                im_final = im
+            buf = io.BytesIO()
+            im_final.save(buf, format="PNG", compress_level=4)
+            return buf.getvalue()
     @classmethod
     def export_glb(
         cls,

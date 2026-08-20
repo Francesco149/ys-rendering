@@ -81,14 +81,20 @@ class NiArchive:
                 return b""
             expected_crc, uncomp_size = struct.unpack("<2I", raw_data[:8])
             comp_data = raw_data[8:]
-            decomp = zlib.decompress(comp_data)
-            if len(decomp) != uncomp_size:
-                print(f"Warning: size mismatch for {entry['clean_name']}: got {len(decomp)}, expected {uncomp_size}")
-            return decomp
+            try:
+                decomp = zlib.decompress(comp_data)
+                return decomp
+            except Exception:
+                try:
+                    decomp = zlib.decompress(comp_data, -zlib.MAX_WBITS)
+                    return decomp
+                except Exception:
+                    return raw_data
         else:
             return raw_data
 
     def extract_all(self, out_dir: Path, filter_pattern: Optional[str] = None):
+        import os
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(self.na_path, "rb") as na_file:
@@ -96,15 +102,19 @@ class NiArchive:
                 name = entry["clean_name"]
                 if filter_pattern and filter_pattern.lower() not in name.lower():
                     continue
-                data = self.extract_file(entry, na_file)
                 norm_path = Path(*name.replace("\\", "/").split("/"))
                 target_path = out_dir / norm_path
+                if target_path.exists() and target_path.stat().st_size > 0:
+                    continue
+                data = self.extract_file(entry, na_file)
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(target_path, "wb") as out_f:
                     out_f.write(data)
+                    try:
+                        os.posix_fadvise(out_f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+                    except Exception:
+                        pass
 if __name__ == "__main__":
     import sys
     ni = NiArchive(Path(sys.argv[1]))
     print(f"Loaded {len(ni.entries)} entries from {sys.argv[1]}")
-    for e in ni.entries[:20]:
-        print(f"  {e['num']:08X} | {e['clean_name']} | size={e['size']} (compressed={e['is_compressed']})")

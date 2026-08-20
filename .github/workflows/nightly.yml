@@ -1,0 +1,65 @@
+name: Nightly Build & Release
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 3 * * *' # Every night at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Native Viewer & Nightly Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix with Flakes
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Run Headless Tests & Oracle Verification
+        run: |
+          nix develop --command make -C editor test
+
+      - name: Build Linux Standalone Package
+        run: |
+          nix develop --command make -C editor package-linux
+          tar -czf build/ys-viewer-linux-x64.tar.gz -C build ys-viewer-linux
+
+      - name: Cross-Compile Windows x64 Package
+        run: |
+          nix develop --command make -C editor package
+          cd build && zip -r ys-viewer-win64.zip ys-viewer-win64 && cd ..
+
+      - name: Create or Update Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Ys Map & Mesh Viewer - Nightly Build"
+          body: |
+            Automated nightly build of **Ys Map & Mesh Viewer** (Raylib 6.0 + Dear ImGui + Lua).
+            
+            ### Included Packages:
+            - `ys-viewer-win64.zip`: Standalone portable Windows x64 release (includes runtime DLLs, vector fonts, and Lua runtime).
+            - `ys-viewer-linux-x64.tar.gz`: Standalone Linux x86_64 package.
+            
+            ### Features:
+            - Real-time 3D exploration for *Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*.
+            - Multi-game map and stage extraction directly from raw `data.ni` archives.
+            - Texture decoding with alpha cutout foliage and additive light shafts.
+            - Collision mesh visualization and inspector data panels.
+          prerelease: true
+          make_latest: true
+          files: |
+            build/ys-viewer-win64.zip
+            build/ys-viewer-linux-x64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

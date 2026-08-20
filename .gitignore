@@ -8,3 +8,5 @@ debug/
 *.obj
 *.gltf
 *.glb
+build/
+imgui.ini
