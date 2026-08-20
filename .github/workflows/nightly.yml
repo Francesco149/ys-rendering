@@ -39,10 +39,18 @@ jobs:
           nix develop --command make -C editor package
           cd build && zip -r ys-viewer-win64.zip ys-viewer-win64 && cd ..
 
+      - name: Bump Nightly Tag to Current Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly ${{ github.sha }}
+          git push -f origin nightly
+
       - name: Create or Update Nightly Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
+          target_commitish: ${{ github.sha }}
           name: "Ys Map & Mesh Viewer - Nightly Build"
           body: |
             Automated nightly build of **Ys Map & Mesh Viewer** (Raylib 6.0 + Dear ImGui + Lua).

@@ -402,8 +402,49 @@ class GltfExporter:
                         discovered_coll.append(YcoParser.parse_file(cand))
                     except Exception:
                         pass
-            collision_meshes = discovered_coll
 
+            # If no .yco collision found, check for Ys Origin collision companion (e.g. S_1000_.ymo)
+            if len(discovered_coll) == 0:
+                for under_suffix in ("_.ymo", "_.YMO"):
+                    cand_under = stage_dir / f"{base_name}{under_suffix}"
+                    if cand_under.exists():
+                        try:
+                            under_model = YmoParser.parse_file(cand_under)
+                            for mesh in under_model.meshes:
+                                for s_idx, sm in enumerate(mesh.submeshes):
+                                    sm_tris = mesh.submesh_triangles[s_idx] if s_idx < len(mesh.submesh_triangles) else mesh.indices
+                                    if len(sm_tris) == 0:
+                                        continue
+                                    # Classify into walkable / wall by surface normals
+                                    v0 = mesh.positions[sm_tris[:, 0]]
+                                    v1 = mesh.positions[sm_tris[:, 1]]
+                                    v2 = mesh.positions[sm_tris[:, 2]]
+                                    fn = np.cross(v1 - v0, v2 - v0)
+                                    fn_len = np.linalg.norm(fn, axis=1, keepdims=True)
+                                    fn_len[fn_len == 0] = 1.0
+                                    fn = fn / fn_len
+                                    mean_ny = np.mean(np.abs(fn[:, 1]))
+                                    c_type = "walkable" if mean_ny > 0.45 else "wall"
+                                    
+                                    # Build collision mesh primitive
+                                    unique_idx, inv_idx = np.unique(sm_tris.flatten(), return_inverse=True)
+                                    sub_pos = mesh.positions[unique_idx]
+                                    sub_norm = mesh.normals[unique_idx]
+                                    sub_idx = inv_idx.reshape((-1, 3))
+                                    
+                                    discovered_coll.append(YcoCollisionMesh(
+                                        filename=cand_under.name,
+                                        collision_type=c_type,
+                                        triangles=[],
+                                        positions=sub_pos,
+                                        normals=sub_norm,
+                                        indices=sub_idx
+                                    ))
+                        except Exception:
+                            pass
+                        break
+
+            collision_meshes = discovered_coll
         # Add Collision Meshes if requested
         if include_collision and collision_meshes:
             for coll in collision_meshes:

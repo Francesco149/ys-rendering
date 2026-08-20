@@ -79,9 +79,9 @@ std::shared_ptr<ParsedYcoModel> YcoLoader::load_from_memory(const uint8_t* data,
         model->collision_type = type_hint.empty() ? "walkable" : type_hint;
     }
 
-    uint32_t poly_count = *(const uint32_t*)(data + 0x18);
+    uint32_t poly_count = *(const uint32_t*)(data + 0x08);
     if (poly_count == 0 || 28 + (size_t)poly_count * 96 > size) {
-        // Fallback: estimate from file size
+        // Fallback: estimate from file size if header count is invalid
         poly_count = (uint32_t)((size - 28) / 96);
     }
 

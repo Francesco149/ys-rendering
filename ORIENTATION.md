@@ -86,11 +86,10 @@ ys-rendering/
 - **Additive & Light Shafts:** Textures starting with `Z_` or named `Z_ZHIKARI` have alpha generated from luminance and use `alphaMode="BLEND"` to blend softly without black box artifacts.
 - **UV Coordinates:** Directly mapped to match top-left texture coordinates.
 - **Collision Layers:**
-  - `Collision_Walkable` (`__s.yco`): Semi-transparent Emerald Green (`[0.1, 0.9, 0.4, 0.4]`).
-  - `Collision_Wall` (`__w.yco`): Semi-transparent Coral Orange (`[1.0, 0.4, 0.1, 0.4]`).
-  - `Collision_Camera` (`__c.yco`): Semi-transparent Cyan Blue (`[0.1, 0.6, 1.0, 0.4]`).
+  - `Collision_Walkable` (`__s.yco` in Felghana/Ys6 or $|N_y| > 0.45$ submesh in Origin `_.ymo`): Semi-transparent Emerald Green (`[0.1, 0.9, 0.4, 0.4]`).
+  - `Collision_Wall` (`__w.yco` in Felghana/Ys6 or $|N_y| \le 0.45$ submesh in Origin `_.ymo`): Semi-transparent Coral Orange (`[1.0, 0.4, 0.1, 0.4]`).
+  - `Collision_Camera` (`__c.yco` in Felghana/Ys6): Semi-transparent Cyan Blue (`[0.1, 0.6, 1.0, 0.4]`).
   - In Blender, all collision layers are grouped under a dedicated `Collision` collection and hidden by default.
-
 ---
 
 ## 🗺️ Known Stages & IDs

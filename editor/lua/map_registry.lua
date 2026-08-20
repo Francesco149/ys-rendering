@@ -81,45 +81,70 @@ function registry.scan_game_stages(game_id)
 
     for _, file in ipairs(files) do
         local path = file.path:lower()
-        -- Look for patterns like map/s_01/s_0100/s_0100.sob or map/s_0100/s_0100.sob
-        local stage_id = path:match("(s_[%w_]+)%.sob") or path:match("(s_[%w_]+)%.ymo")
-        if stage_id then
-            stage_id = stage_id:upper()
-            -- Ignore mapobj submodel definitions
-            if not stage_id:find("MAPOBJ") and not stage_id:find("DOR") then
-                if not stages_map[stage_id] then
-                    stages_map[stage_id] = {
-                        game_id = game_id,
-                        stage_id = stage_id,
-                        sob_path = nil,
-                        ymo_path = nil,
-                        coll_s_path = nil,
-                        coll_w_path = nil,
-                        coll_c_path = nil,
-                        scm_path = nil,
-                    }
-                end
+        local filename = file.path:match("([^/]+)$") or file.path
+        local fname_lower = filename:lower()
 
-                local st = stages_map[stage_id]
-                local filename = file.path:match("([^/]+)$") or file.path
-                local fname_lower = filename:lower()
-                local exact_ymo = (stage_id .. ".ymo"):lower()
-                local exact_sob = (stage_id .. ".sob"):lower()
+        -- Check for Ys Origin collision mesh companion (e.g. s_1000_.ymo)
+        local under_base = fname_lower:match("^(s_[%w]+)_+%.ymo$")
+        if under_base then
+            local base_id = under_base:upper()
+            if not stages_map[base_id] then
+                stages_map[base_id] = {
+                    game_id = game_id,
+                    stage_id = base_id,
+                    sob_path = nil,
+                    ymo_path = nil,
+                    coll_mesh_path = nil,
+                    coll_s_path = nil,
+                    coll_w_path = nil,
+                    coll_c_path = nil,
+                    scm_path = nil,
+                }
+            end
+            stages_map[base_id].coll_mesh_path = file.path
+        else
+            -- Look for patterns like map/s_01/s_0100/s_0100.sob or map/s_0100/s_0100.sob
+            local stage_id = path:match("(s_[%w]+)%.sob") or path:match("(s_[%w]+)%.ymo")
+            if stage_id then
+                stage_id = stage_id:upper()
+                -- Ignore mapobj submodel definitions
+                if not stage_id:find("MAPOBJ") and not stage_id:find("DOR") then
+                    if not stages_map[stage_id] then
+                        stages_map[stage_id] = {
+                            game_id = game_id,
+                            stage_id = stage_id,
+                            sob_path = nil,
+                            ymo_path = nil,
+                            coll_mesh_path = nil,
+                            coll_s_path = nil,
+                            coll_w_path = nil,
+                            coll_c_path = nil,
+                            scm_path = nil,
+                        }
+                    end
 
-                if fname_lower == exact_sob then
-                    st.sob_path = file.path
-                elseif fname_lower == exact_ymo then
-                    st.ymo_path = file.path
-                elseif not st.ymo_path and fname_lower:find("%.ymo$") and not fname_lower:find("__") then
-                    st.ymo_path = file.path
-                elseif fname_lower:find("__s%.yco$") or fname_lower:find("_s%.yco$") then
-                    st.coll_s_path = file.path
-                elseif fname_lower:find("__w%.yco$") or fname_lower:find("_w%.yco$") then
-                    st.coll_w_path = file.path
-                elseif fname_lower:find("__c%.yco$") or fname_lower:find("_c%.yco$") then
-                    st.coll_c_path = file.path
-                elseif fname_lower:find("%.scm$") then
-                    st.scm_path = file.path
+                    local st = stages_map[stage_id]
+                    local exact_ymo = (stage_id .. ".ymo"):lower()
+                    local exact_sob = (stage_id .. ".sob"):lower()
+                    local exact_under = (stage_id .. "_.ymo"):lower()
+
+                    if fname_lower == exact_sob then
+                        st.sob_path = file.path
+                    elseif fname_lower == exact_ymo then
+                        st.ymo_path = file.path
+                    elseif fname_lower == exact_under then
+                        st.coll_mesh_path = file.path
+                    elseif not st.ymo_path and fname_lower:find("%.ymo$") and not fname_lower:find("__") and not fname_lower:find("_%.ymo$") then
+                        st.ymo_path = file.path
+                    elseif fname_lower:find("__s%.yco$") or fname_lower:find("_s%.yco$") then
+                        st.coll_s_path = file.path
+                    elseif fname_lower:find("__w%.yco$") or fname_lower:find("_w%.yco$") then
+                        st.coll_w_path = file.path
+                    elseif fname_lower:find("__c%.yco$") or fname_lower:find("_c%.yco$") then
+                        st.coll_c_path = file.path
+                    elseif fname_lower:find("%.scm$") then
+                        st.scm_path = file.path
+                    end
                 end
             end
         end
@@ -144,6 +169,9 @@ function registry.scan_game_stages(game_id)
         -- If YMO wasn't explicitly found, derive expected path from SOB path
         if not st.ymo_path and st.sob_path then
             st.ymo_path = st.sob_path:gsub("%.[Ss][Oo][Bb]$", ".YMO")
+        end
+        if not st.coll_mesh_path and st.ymo_path then
+            st.coll_mesh_path = st.ymo_path:gsub("%.[Yy][Mm][Oo]$", "_.YMO")
         end
         if not st.coll_s_path and st.ymo_path then
             st.coll_s_path = st.ymo_path:gsub("%.[Yy][Mm][Oo]$", "__s.YCO")

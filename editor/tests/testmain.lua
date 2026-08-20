@@ -246,7 +246,7 @@ test("YCO Collision Object Parser", function()
     local c_handle, info = ys.yco.load_from_memory(bytes, "walkable", "s_0100__s.yco")
     assert_true(c_handle ~= nil, "Parsed and loaded YCO collision to GPU/Mesh")
     assert_true(info ~= nil, "Returned YCO info table")
-    assert_true(info.total_triangles > 0, "Collision has triangles: " .. tostring(info.total_triangles))
+    assert_eq(info.total_triangles, 9384, "S_0100 YCO collision triangle count matches full polygon array (9384 tris)")
     print(string.format("    YCO %s: %d collision triangles (%s)", yco_file, info.total_triangles, info.type))
     ys.yco.unload(c_handle)
 end)
@@ -428,12 +428,21 @@ test("Ys Origin Stage Loading & Stride 48 Mesh Parser", function()
     end
     assert_true(origin_desc ~= nil, "Found Ys Origin stage in registry")
 
+    -- Verify no underscore duplicate stages in registry
+    for _, st in ipairs(registry.stages) do
+        if st.game_id == "origin" then
+            assert_true(not st.stage_id:find("_$"), "Origin stage ID does not end with duplicate underscore: " .. st.stage_id)
+        end
+    end
+
     local sc, err = stage_loader.load_stage(origin_desc)
     assert_true(sc ~= nil, "Loaded Ys Origin stage scene: " .. tostring(err))
     assert_true(sc.base_model_handle ~= nil, "Loaded Ys Origin stage model handle")
+    assert_true(sc.coll_origin_mesh ~= nil, "Origin stage loaded companion collision mesh (_.ymo)")
+    assert_eq(sc.coll_origin_mesh.info.total_triangles, 358, "Origin S_1000 collision mesh has 358 triangles")
     if sc.base_info then
-        print(string.format("    Ys Origin %s stage verified: %d total tris, %d total verts, %d submeshes, %d materials",
-            origin_desc.stage_id, sc.total_triangles, sc.total_vertices, #sc.base_info.submeshes, #sc.base_info.materials))
+        print(string.format("    Ys Origin %s stage verified: %d total tris, %d total verts, %d submeshes, %d materials, %d coll tris",
+            origin_desc.stage_id, sc.total_triangles, sc.total_vertices, #sc.base_info.submeshes, #sc.base_info.materials, sc.coll_origin_mesh.info.total_triangles))
     end
     stage_loader.unload_current_stage()
 end)

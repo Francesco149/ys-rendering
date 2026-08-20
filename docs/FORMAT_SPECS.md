@@ -100,23 +100,62 @@ Each mesh begins at `pos = node_start + node_count * 240 + 80`:
 
 ---
 
-## 3. Collision Geometry Format (`.YCO`)
+## 3. Collision Geometry Architecture Across Engine Generations
 
-Collision meshes provide ground stepping, wall collision, and camera volume boundaries:
-- `__s.yco`: Standable / Walkable ground geometry
-- `__w.yco`: Wall / Obstacle barrier geometry
-- `__c.yco`: Camera bounding volume / occlusion frustum
+Falcom used two distinct collision architectures across the Napishtim Engine family:
+1. **Dedicated Collision Format (`.YCO`)** — *Ys: The Oath in Felghana* and *Ys VI: The Ark of Napishtim*.
+2. **Low-Poly Companion Model Format (`Stage_.YMO`)** — *Ys Origin*.
 
-### 3.1 `.YCO` Polygon Record (96 bytes per triangle)
-- `+0x00`: `v0` (x, y, z floats - 12 bytes)
-- `+0x0C`: `v1` (x, y, z floats - 12 bytes)
-- `+0x18`: `v2` (x, y, z floats - 12 bytes)
-- `+0x24`: `normal` (nx, ny, nz floats - 12 bytes)
-- `+0x30`: `plane_d` (float - 4 bytes)
-- `+0x34`: `bounding_box` (min_x, min_y, min_z, max_x floats - 16 bytes)
-- `+0x48`: `surface_flags` (uint32)
-- `+0x4C`: `collision_attributes` (uint32)
+---
 
+### 3.1 `.YCO` Format (*Felghana* & *Ys VI*)
+
+Collision geometry in Felghana and Ys VI is authored as separate binary files alongside stage and prop models:
+- `__s.yco`: Standable / Walkable ground geometry (semi-transparent emerald green in viewer).
+- `__w.yco`: Wall / Obstacle barrier geometry (semi-transparent coral orange in viewer).
+- `__c.yco`: Camera bounding volume / occlusion frustum (semi-transparent cyan blue in viewer).
+
+#### 3.1.1 `.YCO` Header (28 bytes)
+| Offset | Type | Field | Description |
+|---|---|---|---|
+| `0x00` | `4 bytes` | `magic` | `"YCO\0"` (`0x004F4359`) |
+| `0x04` | `u32` | `version` | Version (`1`) |
+| `0x08` | `u32` | `polygon_count` | Exact count of 96-byte collision triangle records |
+| `0x0C` | `u32` | `spatial_cell_count` | Number of spatial partition index entries |
+| `0x10` | `u32` | `spatial_grid_dim` | Spatial partition grid dimension (e.g. `10`) |
+| `0x14` | `f32` | `cell_size` | Grid cell world scale factor (e.g. `1.0f`) |
+| `0x18` | `u32` | `spatial_depth_flags` | Spatial hierarchy depth & engine flags (e.g. `8`) |
+
+#### 3.1.2 `.YCO` Polygon Record (96 bytes per triangle, starting at `0x1C`)
+| Offset | Type | Field | Description |
+|---|---|---|---|
+| `+0x00` | `3x f32` | `v0` | Vertex 0 position `(x, y, z)` |
+| `+0x0C` | `3x f32` | `v1` | Vertex 1 position `(x, y, z)` |
+| `+0x18` | `3x f32` | `v2` | Vertex 2 position `(x, y, z)` |
+| `+0x24` | `3x f32` | `normal` | Triangle plane unit normal `(nx, ny, nz)` |
+| `+0x30` | `f32` | `plane_d` | Plane equation constant `D` where $\vec{N} \cdot \vec{P} + D = 0$ |
+| `+0x34` | `4x f32` | `bounding_box_min` | Triangle AABB `(min_x, min_y, min_z, max_x)` |
+| `+0x44` | `2x f32` | `bounding_box_max` | Triangle AABB `(max_y, max_z)` |
+| `+0x48` | `u32` | `surface_flags` | Material type (wood, stone, water, ice, metal, slippery, fall-through) |
+| `+0x4C` | `u32` | `collision_attributes`| Trigger ID, damage zone flag, sound FX ID |
+
+#### 3.1.3 `.YCO` Spatial Acceleration Structure (Tail)
+Immediately following the polygon array (`0x1C + polygon_count * 96`):
+- `6x f32`: Overall collision volume AABB `(min_x, min_y, min_z, max_x, max_y, max_z)`.
+- Array of `u32` spatial grid indices for $O(1)$ capsule sweep and raycast broadphase queries.
+
+---
+
+### 3.2 `Stage_.YMO` Companion Collision Format (*Ys Origin*)
+
+In *Ys Origin*, Falcom deprecated the proprietary `.YCO` compiler and standardized collision authoring on standard low-poly companion `.YMO` models:
+- Every stage has a visual mesh `S_XXXX.YMO` (high-poly, textured) and a collision mesh `S_XXXX_.YMO` (low-poly proxy, untextured).
+- Map objects follow the same convention: `MAPOBJ/DOOR_07/DOOR_07.YMO` has `DOOR_07_.YMO`.
+- **Materials:** Empty texture string (`tex=''`), `flags=0x00000000`, `alpha=1.0`.
+- **Submeshes & Normal Partitioning:**
+  - **Wall Submeshes:** Face normals are horizontal ($|N_y| \approx 0.0$), defining solid boundaries and obstacles.
+  - **Walkable Submeshes:** Face normals point upward ($|N_y| > 0.45$), defining standable floors, stairs, and ramps.
+- **Viewer Integration:** The viewer deduplicates `S_XXXX_.YMO` from the map browser, links it as `st.coll_mesh_path`, and renders it as a toggleable collision layer in the viewport.
 ---
 
 ## 4. Scene Object Placement Format (`.SOB`)

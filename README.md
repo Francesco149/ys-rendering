@@ -1,9 +1,20 @@
-# Ys 3D Rendering & Map Extraction Pipeline
+# Ys 3D Map Viewer & Extraction Pipeline
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Nix Flake](https://img.shields.io/badge/Nix-Flake-blue.svg)](flake.nix)
+[![Nightly Release](https://img.shields.io/github/v/release/Francesco149/ys-rendering?label=Nightly%20Build&logo=github)](https://github.com/Francesco149/ys-rendering/releases/tag/nightly)
 
-Turnkey reverse engineering, extraction, and 3D conversion pipeline for Nihon Falcom's **Napishtim Engine** PC titles (*Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*). Converts proprietary game archives (`.na`/`.ni`), map geometry (`.ymo`), collision meshes (`.yco`), and stage object placement scripts (`.sob`) into standard **glTF 2.0 / GLB** and **Wavefront OBJ** models ready for topology and UV analysis in Blender.
+Native real-time 3D desktop map viewer (Raylib 6.0 + Dear ImGui + Lua) and turnkey reverse engineering/extraction pipeline for Nihon Falcom's **Napishtim Engine** PC titles (*Ys: The Oath in Felghana*, *Ys Origin*, and *Ys VI: The Ark of Napishtim*). Explores stages directly from raw encrypted game archives (`data.ni`/`data.na`) with dynamic texture streaming, turntable previews, collision layer toggles, and conversion to standard **glTF 2.0 / GLB** and **Wavefront OBJ** models for Blender and Godot.
+
+---
+
+## 🎬 Video Showcase
+
+<!-- VIDEO SHOWCASE PLACEHOLDER START -->
+[![Ys 3D Map Viewer Showcase](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
+
+> **Demo Video:** *Interactive walkthrough of the native 3D desktop map viewer, real-time stage exploration, collision overlay toggles, and batch asset extraction pipeline.*
+<!-- VIDEO SHOWCASE PLACEHOLDER END -->
 
 ---
 

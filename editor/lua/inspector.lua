@@ -164,7 +164,7 @@ function inspector.render(scene, screen_w, screen_h)
                 end
 
             elseif inspector.selected_tab == "colliders" then
-                ig.text_colored("Collision Geometry (YCO Layers):", 0.96, 0.62, 0.04, 1.0)
+                ig.text_colored("Collision Geometry (Layers & Meshes):", 0.96, 0.62, 0.04, 1.0)
                 ig.spacing()
 
                 -- Walkable Ground (__s)
@@ -177,7 +177,7 @@ function inspector.render(scene, screen_w, screen_h)
                     ig.text_colored("[Walkable Floor __s]", 0.1, 0.9, 0.4, 1.0)
                     ig.same_line()
                     ig.text(string.format("(%d tris)", w_tris))
-                else
+                elseif not scene.coll_origin_mesh then
                     ig.text_colored("[Walkable Floor __s] Not present", 0.45, 0.45, 0.5, 1.0)
                 end
 
@@ -191,7 +191,7 @@ function inspector.render(scene, screen_w, screen_h)
                     ig.text_colored("[Obstacle Walls __w]", 1.0, 0.4, 0.1, 1.0)
                     ig.same_line()
                     ig.text(string.format("(%d tris)", wl_tris))
-                else
+                elseif not scene.coll_origin_mesh then
                     ig.text_colored("[Obstacle Walls __w] Not present", 0.45, 0.45, 0.5, 1.0)
                 end
 
@@ -205,8 +205,21 @@ function inspector.render(scene, screen_w, screen_h)
                     ig.text_colored("[Camera Boundary __c]", 0.1, 0.6, 1.0, 1.0)
                     ig.same_line()
                     ig.text(string.format("(%d tris)", c_tris))
-                else
+                elseif not scene.coll_origin_mesh then
                     ig.text_colored("[Camera Boundary __c] Not present", 0.45, 0.45, 0.5, 1.0)
+                end
+
+                -- Origin Collision Mesh (Stage_.YMO)
+                if scene.coll_origin_mesh then
+                    local vis = (scene.coll_origin_mesh_visible ~= false)
+                    local ch, new_vis = ig.checkbox("##vis_origin_coll", vis)
+                    if ch then scene.coll_origin_mesh_visible = new_vis end
+                    ig.same_line()
+                    local o_tris = scene.coll_origin_mesh.info.total_triangles or 0
+                    local o_subs = #(scene.coll_origin_mesh.info.submeshes or {})
+                    ig.text_colored("[Origin Collider _.ymo]", 0.1, 0.9, 0.4, 1.0)
+                    ig.same_line()
+                    ig.text(string.format("(%d tris, %d submeshes)", o_tris, o_subs))
                 end
 
                 ig.spacing()

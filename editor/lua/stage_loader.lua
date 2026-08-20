@@ -119,6 +119,7 @@ function stage_loader.load_stage(stage_desc)
         coll_walkable = nil,
         coll_wall = nil,
         coll_camera = nil,
+        coll_origin_mesh = nil,
         scm_camera = nil,
         bounds = { min = { x = -20, y = 0, z = -20 }, max = { x = 20, y = 10, z = 20 } },
         center = { x = 0, y = 0, z = 0 },
@@ -252,6 +253,16 @@ function stage_loader.load_stage(stage_desc)
         end
     end
 
+    -- 3b. Load Origin Collision Mesh (Stage_.YMO companion)
+    if stage_desc.coll_mesh_path then
+        local bytes = ys.archive.read_file(arch_handle, stage_desc.coll_mesh_path)
+        if bytes then
+            local handle, info = ys.ymo.load_from_memory(bytes, get_filename(stage_desc.coll_mesh_path))
+            if handle then
+                scene.coll_origin_mesh = { handle = handle, info = info }
+            end
+        end
+    end
     -- 4. Load Camera Metadata (SCM)
     if stage_desc.scm_path then
         local bytes = ys.archive.read_file(arch_handle, stage_desc.scm_path)
@@ -379,6 +390,11 @@ function stage_loader.render_scene(scene, opts)
         if scene.coll_camera and scene.coll_camera_visible ~= false then
             ys.yco.draw(scene.coll_camera.handle, 0, 0, 0, 0, 0, 0, 1, 1, 1, 26, 153, 255, 110, show_wireframe)
         end
+        if scene.coll_origin_mesh and scene.coll_origin_mesh_visible ~= false then
+            -- Draw Origin collision mesh in translucent collision style with wireframe overlay
+            ys.ymo.draw(scene.coll_origin_mesh.handle, 0, 0, 0, 0, 0, 0, 1, 1, 1, 26, 230, 102, 120, false, true, false)
+            ys.ymo.draw(scene.coll_origin_mesh.handle, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 240, 180, 220, true, true, false)
+        end
     end
 end
 
@@ -418,6 +434,10 @@ function stage_loader.unload_current_stage()
     if scene.coll_camera and not unloaded_coll[scene.coll_camera.handle] then
         ys.yco.unload(scene.coll_camera.handle)
         unloaded_coll[scene.coll_camera.handle] = true
+    end
+    if scene.coll_origin_mesh and not unloaded_handles[scene.coll_origin_mesh.handle] then
+        ys.ymo.unload(scene.coll_origin_mesh.handle)
+        unloaded_handles[scene.coll_origin_mesh.handle] = true
     end
 
     stage_loader.current_scene = nil
