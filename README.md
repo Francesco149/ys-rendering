@@ -10,8 +10,8 @@ Native real-time 3D desktop map viewer (Raylib 6.0 + Dear ImGui + Lua) and turnk
 
 ## 🎬 Video Showcase
 
-<!-- VIDEO SHOWCASE PLACEHOLDER START -->
-[![Ys 3D Map Viewer Showcase](https://img.youtube.com/vi/YOUR_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
+
+ <video src="https://github.com/user-attachments/assets/3e839485-8d9b-4e62-8a0a-e1d82b9302e2" controls="controls" width="800"></video>
 
 > **Demo Video:** *Interactive walkthrough of the native 3D desktop map viewer, real-time stage exploration, collision overlay toggles, and batch asset extraction pipeline.*
 <!-- VIDEO SHOWCASE PLACEHOLDER END -->
